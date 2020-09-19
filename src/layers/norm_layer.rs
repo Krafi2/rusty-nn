@@ -1,6 +1,6 @@
-use super::{Layer, LayerArch, LayerType, OutShape};
+use super::{Layer, LayerArch, LayerBuilder, LayerType, OutShape};
 use crate::activation_functions::ActivFunc;
-use crate::allocator::{invalid_handle, Allocator, GradHdnl, Mediator, WeightHndl};
+use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;
 use crate::helpers::{
     empty_vec_simd, least_size, simd_to_iter, simd_with, splat_n, to_scalar, to_scalar_mut,
@@ -30,21 +30,6 @@ pub struct NormLayer<T: ActivFunc> {
     marker_: std::marker::PhantomData<*const T>,
 }
 impl<T: ActivFunc> Layer for NormLayer<T> {
-    fn connect(&mut self, shape: OutShape, init: &mut dyn Initializer, mut aloc: Allocator) {
-        self.size = shape.dims.iter().product();
-        self.actual_size = least_size(self.size, f32s::lanes());
-
-        let res = aloc.allocate_with(self.actual_size, || init.get(self.size, self.size));
-        self.weights = res.0;
-        self.w_gradients = res.1;
-
-        let res = aloc.allocate(self.actual_size);
-        self.biases = res.0;
-        self.b_gradients = res.1;
-
-        self.rebuild();
-    }
-
     fn rebuild(&mut self) {
         self.weighted_inputs = splat_n(self.actual_size, 0.);
         self.activations = splat_n(self.actual_size, 0.);
@@ -141,26 +126,57 @@ impl<T: ActivFunc> Layer for NormLayer<T> {
     }
 }
 impl<T: ActivFunc> NormLayer<T> {
-    pub fn new() -> Self {
-        NormLayer {
-            size: 0,
-            actual_size: 0,
+    pub fn new<I: Initializer>(mut init: I, mut alloc: Allocator, size: usize) -> Self {
+        let actual_size = least_size(size, f32s::lanes());
 
-            weights: invalid_handle(),
-            biases: invalid_handle(),
+        let w_handles = alloc.allocate_with(actual_size, || init.get(size, size));
+        let b_handles = alloc.allocate(actual_size);
 
-            w_gradients: invalid_handle(),
-            b_gradients: invalid_handle(),
+        let mut layer = NormLayer {
+            size,
+            actual_size,
 
-            weighted_inputs: empty_vec_simd(),
-            activations: empty_vec_simd(),
+            weights: w_handles.0,
+            biases: b_handles.0,
+
+            w_gradients: w_handles.1,
+            b_gradients: b_handles.1,
+
+            weighted_inputs: vec![],
+            activations: vec![],
             marker_: std::marker::PhantomData,
-        }
+        };
+        layer.rebuild();
+        layer
     }
 }
 
 impl<T: ActivFunc> Into<LayerType> for NormLayer<T> {
     fn into(self) -> LayerType {
         LayerType::from(LayerArch::NormLayer(self))
+    }
+}
+
+pub struct NormBuilder<T: ActivFunc, I: Initializer> {
+    init: I,
+    marker_: std::marker::PhantomData<*const T>,
+}
+
+impl<T: ActivFunc, I: Initializer> NormBuilder<T, I> {
+    pub fn new(init: I) -> Self {
+        NormBuilder {
+            init,
+            marker_: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T: ActivFunc, I: Initializer> LayerBuilder for NormBuilder<T, I> {
+    type Output = NormLayer<T>;
+    fn connect(self, shape: Option<OutShape>, alloc: Allocator) -> Self::Output {
+        let shape = shape
+            .expect("A NormLayer cannot be the input layer of a network, use a specialized layer");
+        let in_size = shape.dims.iter().product();
+        NormLayer::new(self.init, alloc, in_size)
     }
 }

@@ -12,8 +12,60 @@ use serde::{
 use crate::allocator::{Allocator, Mediator, WeightHndl};
 use crate::f32s;
 use crate::helpers::{least_size, to_scalar};
-use crate::initializer::Initializer;
-use crate::layers::{Layer, LayerType};
+use crate::layers::{Layer, LayerBuilder, LayerType};
+
+pub struct NetworkBuilder {
+    weights: Vec<f32s>,
+    layers: Vec<LayerType>,
+}
+
+impl NetworkBuilder {
+    pub fn new() -> Self {
+        NetworkBuilder {
+            weights: Vec::new(),
+            layers: Vec::new(),
+        }
+    }
+
+    /// Adds a single layer to the network.
+    pub fn add<T>(mut self, layer_builder: T) -> Self
+    where
+        T: LayerBuilder,
+        T::Output: Into<LayerType>,
+    {
+        let shape = self.layers.last().map(|l| l.out_shape());
+        self.layers.push(
+            layer_builder
+                .connect(shape, Allocator::new(&mut self.weights))
+                .into(),
+        );
+        self
+    }
+    /// Adds all of the layers provided by the `builders` argument.
+    pub fn add_layers<T>(mut self, builders: T) -> Self
+    where
+        T: IntoIterator,
+        T::Item: LayerBuilder,
+        <T::Item as LayerBuilder>::Output: Into<LayerType>,
+    {
+        for builder in builders {
+            self = self.add(builder);
+        }
+        self
+    }
+
+    /// Builds the network. Returns None if no layers had been provided.
+    pub fn build(self) -> Option<Network> {
+        if self.layers.is_empty() {
+            None
+        } else {
+            Some(Network {
+                weights: self.weights,
+                layers: self.layers,
+            })
+        }
+    }
+}
 
 /// This struct represents a neural network and supports the basic functionality of giving predictions based on provided input.
 /// Additionally, it can be both saved to and loaded from a file.
@@ -25,13 +77,6 @@ pub struct Network {
 }
 
 impl Network {
-    pub fn new() -> Network {
-        Network {
-            weights: Vec::new(),
-            layers: Vec::new(),
-        }
-    }
-
     pub fn from_file(path: &str) -> anyhow::Result<Network> {
         let s = fs::read_to_string(path)?;
         let network: Network = serde_json::from_str(&s)?;
@@ -41,18 +86,6 @@ impl Network {
     pub fn save(&self, path: &str) -> anyhow::Result<()> {
         fs::write(path, serde_json::to_string(&self)?)?;
         Ok(())
-    }
-
-    pub fn add<I, T>(&mut self, init: &mut I, mut layer: T) -> &mut Self
-    where
-        I: Initializer,
-        T: Layer + Into<LayerType> + 'static,
-    {
-        if let Some(l) = self.layers.last() {
-            layer.connect(l.out_shape(), init, Allocator::new(&mut self.weights));
-        }
-        self.layers.push(layer.into());
-        self
     }
 
     /// Propagate input through the network. `input` has to be the same size as the network's ipnut layer.
@@ -126,15 +159,9 @@ impl Network {
     }
 }
 
-impl Default for Network {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// When deserializing, we first construct this object, validate that it's structure is correct and convert to Network
 #[derive(Serialize, Deserialize)]
-pub struct NetworkUnvalidated {
+struct NetworkUnvalidated {
     #[serde(
         serialize_with = "serialize_simd",
         deserialize_with = "deserialize_simd"

@@ -77,7 +77,7 @@ impl<O: Optimizer, U: AsRef<[f32]>> DefaultBuilder<O, U> {
     }
 }
 
-impl <O: Optimizer, U: AsRef<[f32]>> Default for DefaultBuilder<O, U> {
+impl<O: Optimizer, U: AsRef<[f32]>> Default for DefaultBuilder<O, U> {
     fn default() -> Self {
         Self::new()
     }

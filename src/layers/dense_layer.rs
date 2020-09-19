@@ -1,6 +1,6 @@
-use super::{Layer, LayerArch, LayerType, OutShape};
+use super::{Layer, LayerArch, LayerBuilder, LayerType, OutShape};
 use crate::activation_functions::ActivFunc;
-use crate::allocator::{invalid_handle, Allocator, GradHdnl, Mediator, WeightHndl};
+use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;
 use crate::helpers::{empty_vec_simd, least_size, splat_n, sum, to_scalar, to_scalar_mut};
 use crate::initializer::Initializer;
@@ -33,22 +33,6 @@ pub struct DenseLayer<T: ActivFunc> {
 }
 
 impl<T: ActivFunc> Layer for DenseLayer<T> {
-    fn connect(&mut self, shape: OutShape, init: &mut dyn Initializer, mut aloc: Allocator) {
-        self.in_size = shape.dims.iter().product();
-        self.actual_in = least_size(self.in_size, f32s::lanes());
-
-        let n_w = self.actual_in * self.size;
-        let res = aloc.allocate_with(n_w, || init.get(self.in_size, self.size));
-        self.weights = res.0;
-        self.w_gradients = res.1;
-
-        let res = aloc.allocate(self.actual_size);
-        self.biases = res.0;
-        self.b_gradients = res.1;
-
-        self.rebuild();
-    }
-
     fn rebuild(&mut self) {
         self.weighted_inputs = splat_n(self.actual_size, 0.);
         self.activations = splat_n(self.actual_size, 0.);
@@ -199,24 +183,63 @@ impl<T: ActivFunc> Layer for DenseLayer<T> {
 }
 
 impl<T: ActivFunc> DenseLayer<T> {
-    pub fn new(size: usize) -> DenseLayer<T> {
-        DenseLayer {
-            in_size: 0,
-            actual_in: 0,
+    pub fn new<I: Initializer>(
+        mut init: I,
+        mut alloc: Allocator,
+        in_size: usize,
+        size: usize,
+    ) -> DenseLayer<T> {
+        let actual_in = least_size(in_size, f32s::lanes());
+        let actual_size = least_size(size, f32s::lanes());
+        // weight count
+        let wc = actual_in * size;
+
+        let w_handles = alloc.allocate_with(wc, || init.get(in_size, size));
+        let b_handles = alloc.allocate(actual_size);
+
+        let mut layer = DenseLayer {
+            in_size,
+            actual_in,
             size,
-            actual_size: least_size(size, f32s::lanes()),
+            actual_size,
+            weights: w_handles.0,
+            biases: b_handles.0,
+            w_gradients: w_handles.1,
+            b_gradients: b_handles.1,
+            weighted_inputs: vec![],
+            activations: vec![],
+            temp: vec![],
+            marker_: std::marker::PhantomData,
+        };
+        layer.rebuild();
+        layer
+    }
+}
 
-            weights: invalid_handle(),
-            biases: invalid_handle(),
+pub struct DenseBuilder<T: ActivFunc, I: Initializer> {
+    init: I,
+    size: usize,
+    marker_: std::marker::PhantomData<*const T>,
+}
 
-            w_gradients: invalid_handle(),
-            b_gradients: invalid_handle(),
-
-            weighted_inputs: empty_vec_simd(),
-            activations: empty_vec_simd(),
-            temp: empty_vec_simd(),
+impl<T: ActivFunc, I: Initializer> DenseBuilder<T, I> {
+    pub fn new(init: I, size: usize) -> Self {
+        DenseBuilder {
+            init,
+            size,
             marker_: std::marker::PhantomData,
         }
+    }
+}
+
+impl<T: ActivFunc, I: Initializer> LayerBuilder for DenseBuilder<T, I> {
+    type Output = DenseLayer<T>;
+
+    fn connect(self, shape: Option<OutShape>, alloc: Allocator) -> Self::Output {
+        let shape = shape
+            .expect("A DenseLayer cannot be the input layer of a network, use a specialized layer");
+        let in_size = shape.dims.iter().product();
+        DenseLayer::new(self.init, alloc, in_size, self.size)
     }
 }
 

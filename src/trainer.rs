@@ -266,7 +266,7 @@ impl<O: Optimizer> BuilderBase<O> {
     }
 }
 
-impl <O: Optimizer> Default for BuilderBase<O> {
+impl<O: Optimizer> Default for BuilderBase<O> {
     fn default() -> Self {
         Self::new()
     }

@@ -1,9 +1,8 @@
-use super::{Layer, LayerArch, LayerType, OutShape};
+use super::{Layer, LayerArch, LayerBuilder, LayerType, OutShape};
 use crate::activation_functions::Identity;
 use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;
 use crate::helpers::{empty_vec_simd, least_size, to_scalar, to_scalar_mut};
-use crate::initializer::Initializer;
 
 use serde::{Deserialize, Serialize};
 use small_table::Table;
@@ -17,10 +16,6 @@ pub struct InputLayer {
 }
 
 impl Layer for InputLayer {
-    fn connect(&mut self, _shape: OutShape, _init: &mut dyn Initializer, _aloc: Allocator) {
-        panic!("Input layer cannot be connected")
-    }
-
     fn rebuild(&mut self) {
         self.activations = vec![f32s::splat(0.); self.actual_size]
     }
@@ -87,5 +82,24 @@ impl InputLayer {
 impl Into<LayerType> for InputLayer {
     fn into(self) -> LayerType {
         LayerType::from(LayerArch::InputLayer::<Identity>(self))
+    }
+}
+
+pub struct InputBuilder {
+    size: usize,
+}
+impl InputBuilder {
+    pub fn new(size: usize) -> Self {
+        InputBuilder { size }
+    }
+}
+
+impl LayerBuilder for InputBuilder {
+    type Output = InputLayer;
+    fn connect(self, shape: Option<OutShape>, _alloc: Allocator) -> Self::Output {
+        if shape.is_some() {
+            panic!("There can't be any layers before InputLayer")
+        }
+        InputLayer::new(self.size)
     }
 }

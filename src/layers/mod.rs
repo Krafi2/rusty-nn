@@ -2,13 +2,16 @@ mod dense_layer;
 mod input_layer;
 mod norm_layer;
 
-pub use dense_layer::DenseLayer;
-pub use input_layer::InputLayer;
-pub use norm_layer::NormLayer;
+pub use dense_layer::DenseBuilder;
+pub use input_layer::InputBuilder;
+pub use norm_layer::NormBuilder;
+
+use self::dense_layer::DenseLayer;
+use self::input_layer::InputLayer;
+use self::norm_layer::NormLayer;
 
 use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;
-use crate::initializer::Initializer;
 
 use crate::activation_functions::*;
 use enum_dispatch::enum_dispatch;
@@ -16,8 +19,6 @@ use serde::{Deserialize, Serialize};
 
 #[enum_dispatch]
 pub trait Layer: Clone {
-    ///Connect to a layer
-    fn connect(&mut self, shape: OutShape, init: &mut dyn Initializer, aloc: Allocator);
     ///Reallocate memory needed for evaluation.
     ///Used after deserialization as this memory doesnt need to be serialized.
     fn rebuild(&mut self);
@@ -52,6 +53,13 @@ pub trait Layer: Clone {
     fn set_activations(&mut self, _activations: &[f32]) {
         panic!("set_activations not implemented for this layer type")
     }
+}
+
+/// Trait all layer builder must implement in order to be added to a NetworkBuilder via the add function.
+pub trait LayerBuilder {
+    type Output: Layer;
+    /// Connect a layer to the previous one. `shape` will be None if there are no layers before.
+    fn connect(self, shape: Option<OutShape>, alloc: Allocator) -> Self::Output;
 }
 
 #[derive(Clone)]

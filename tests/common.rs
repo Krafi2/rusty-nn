@@ -1,8 +1,8 @@
 use rusty_nn::activation_functions::{ActivFunc, Sigmoid};
 use rusty_nn::initializer::XavierInit;
-use rusty_nn::layers::{DenseLayer, InputLayer};
+use rusty_nn::layers::{DenseBuilder, InputBuilder};
 use rusty_nn::loss_functions::SquaredError;
-use rusty_nn::network::Network;
+use rusty_nn::network::NetworkBuilder;
 use rusty_nn::optimizer::GradientDescent;
 use rusty_nn::trainer::*;
 
@@ -24,10 +24,11 @@ pub fn basic_trainer() -> DefaultTrainer<GradientDescent<SquaredError>, [f32; 2]
 
     let t_data = t_data();
 
-    let mut xavier = XavierInit::new();
-    let mut network = Network::new();
-    network.add(&mut xavier, InputLayer::new(1));
-    network.add(&mut xavier, DenseLayer::<Sigmoid>::new(1));
+    let network = NetworkBuilder::new()
+        .add(InputBuilder::new(1))
+        .add(DenseBuilder::<Sigmoid, _>::new(XavierInit::new(), 1))
+        .build()
+        .unwrap();
 
     let optimizer = GradientDescent::<SquaredError>::new(network);
     DefaultBuilder::new()
