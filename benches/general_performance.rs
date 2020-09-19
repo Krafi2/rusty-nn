@@ -20,7 +20,7 @@ fn training_speed(b: &mut Bencher) {
         weight_decay: 0.1,
     };
 
-    let mut t_data = [[0.,  0.]; 100];
+    let t_data = vec![[0.,  0.]; 100];
 
     let mut xavier = XavierInit::new();
     let mut network = Network::new();

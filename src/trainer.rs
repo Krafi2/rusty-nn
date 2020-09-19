@@ -1,5 +1,4 @@
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
-use serde_json;
 
 use anyhow::Context;
 use std::fs;
@@ -259,11 +258,17 @@ impl<O: Optimizer> BuilderBase<O> {
             batch: self.batch.unwrap_or(0),
             loss_accumulator: self.loss_accumulator.unwrap_or(0.),
             optimizer: self.optimizer.expect("Optimizer needs to be initialized"),
-            loss_handler: self.loss_handler.unwrap_or(Box::new(|_| {})),
+            loss_handler: self.loss_handler.unwrap_or_else(|| Box::new(|_| {})),
             save_handler: self
                 .save_handler
-                .unwrap_or(Box::new(|e| format!("epoch_{}", e))),
+                .unwrap_or_else(|| Box::new(|e| format!("epoch_{}", e))),
         }
+    }
+}
+
+impl <O: Optimizer> Default for BuilderBase<O> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

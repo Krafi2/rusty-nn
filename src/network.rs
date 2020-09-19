@@ -126,6 +126,12 @@ impl Network {
     }
 }
 
+impl Default for Network {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// When deserializing, we first construct this object, validate that it's structure is correct and convert to Network
 #[derive(Serialize, Deserialize)]
 pub struct NetworkUnvalidated {
@@ -244,7 +250,7 @@ impl<'de> Visitor<'de> for SimdVisitor {
             let cap = vec.capacity() * f32s::lanes();
 
             unsafe {
-                let vec_: *mut f32 = std::mem::transmute(vec.as_mut_ptr());
+                let vec_: *mut f32 = vec.as_mut_ptr() as *mut f32;
                 while let Some(e) = seq.next_element()? {
                     vec_.add(len).write(e);
 
@@ -265,7 +271,7 @@ impl<'de> Visitor<'de> for SimdVisitor {
                 vec.reserve(1);
 
                 unsafe {
-                    let vec_: *mut f32 = std::mem::transmute(vec.as_mut_ptr());
+                    let vec_: *mut f32 = vec.as_mut_ptr() as *mut f32;
                     let mut i = 0;
                     while let Some(e) = seq.next_element()? {
                         vec_.add(len * f32s::lanes() + i).write(e);
@@ -298,7 +304,7 @@ impl<'de> Visitor<'de> for SimdVisitor {
     }
 }
 
-pub fn serialize_simd<S>(vec: &Vec<f32s>, s: S) -> Result<S::Ok, S::Error>
+pub fn serialize_simd<S>(vec: &[f32s], s: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {

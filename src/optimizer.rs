@@ -103,7 +103,7 @@ impl<F: LossFunc> Optimizer for GradientDescent<F> {
         let weights = self.network.weights_mut();
         assert_eq!(weights.len(), self.gradients.len());
 
-        for (w, d) in weights.into_iter().zip(&mut self.gradients) {
+        for (w, d) in weights.iter_mut().zip(&mut self.gradients) {
             *w = w.mul_add(decay, k * *d);
             *d = f32s::splat(0.);
         }
@@ -125,7 +125,7 @@ impl<F: LossFunc> Optimizer for GradientDescent<F> {
 
 impl<F: LossFunc> GradientDescent<F> {
     pub fn new(network: Network) -> GradientDescent<F> {
-        assert!(network.layers().len() > 0);
+        assert!(!network.layers().is_empty());
         let size = least_size(network.weight_count(), f32s::lanes());
         let gradients = vec![f32s::splat(0.); size];
 
@@ -265,7 +265,7 @@ impl<F: LossFunc> Optimizer for Adam<F> {
 
 impl<F: LossFunc> Adam<F> {
     pub fn new(network: Network, beta1: f32, beta2: f32, epsilon: f32) -> Adam<F> {
-        assert!(network.layers().len() > 0);
+        assert!(!network.layers().is_empty());
         let size = least_size(network.weight_count(), f32s::lanes());
         let gradients = vec![f32s::splat(0.); size];
 
@@ -355,7 +355,7 @@ fn default_process<F: LossFunc>(
     );
     calculate_gradients(
         &mut network.layers,
-        &mut network.weights,
+        &network.weights,
         gradients,
         buffer1,
         buffer2,
@@ -389,7 +389,7 @@ fn default_process_partial<F: LossFunc>(
     to_scalar_mut(buffer1)[index] = deriv;
     calculate_gradients(
         &mut network.layers,
-        &mut network.weights,
+        &network.weights,
         gradients,
         buffer1,
         buffer2,
@@ -413,7 +413,7 @@ fn default_process_with<F: FnMut(&[f32], &mut [f32]) -> f32>(
     );
     calculate_gradients(
         &mut network.layers,
-        &mut network.weights,
+        &network.weights,
         gradients,
         buffer1,
         buffer2,
@@ -448,7 +448,7 @@ fn default_process_partial_with<E: LossFunc, F: FnMut(f32, usize) -> Option<f32>
     }
     calculate_gradients(
         &mut network.layers,
-        &mut network.weights,
+        &network.weights,
         gradients,
         buffer1,
         buffer2,

@@ -27,7 +27,7 @@ impl IndexShuffler {
 impl Iterator for IndexShuffler {
     type Item = usize;
     fn next(&mut self) -> Option<Self::Item> {
-        let i = self.idxs.get(self.idx).map(|x| *x);
+        let i = self.idxs.get(self.idx).copied();
         self.idx += 1;
         i
     }
@@ -35,12 +35,12 @@ impl Iterator for IndexShuffler {
 
 /// Overwrites the contents of a slice to zeros
 pub fn zero(slice: &mut [f32]) {
-    slice.into_iter().for_each(|f| *f = 0.);
+    slice.iter_mut().for_each(|f| *f = 0.);
 }
 
 pub fn zero_simd(slice: &mut [f32s]) {
     let zero = f32s::splat(0.);
-    slice.into_iter().for_each(|f| *f = zero);
+    slice.iter_mut().for_each(|f| *f = zero);
 }
 
 pub fn empty_slice() -> Box<[f32]> {
@@ -82,17 +82,17 @@ where
 {
     let mut af_deriv: MaybeUninit<f32s> = MaybeUninit::uninit();
     unsafe {
-        let ptr: *mut f32 = transmute(af_deriv.as_mut_ptr());
+        let ptr = af_deriv.as_mut_ptr() as *mut f32;
         for i in 0..f32s::lanes() {
             ptr.add(i).write(iter.next().unwrap());
         }
-        return af_deriv.assume_init();
+        af_deriv.assume_init()
     }
 }
 
 pub fn simd_to_iter<'a>(simd: f32s) -> std::slice::Iter<'a, f32> {
     let slice = [simd];
-    unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const f32, f32s::lanes()).into_iter() }
+    unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const f32, f32s::lanes()).iter() }
 }
 
 /// Returns a mask with the first n lanes set to true
@@ -105,12 +105,12 @@ pub fn mask(n: usize) -> mask_s {
         for i in arr.iter_mut().take(n) {
             *i = usize_s::MAX;
         }
-        return m.assume_init();
+        m.assume_init()
     }
 }
 
 pub fn sum(arr: &[f32s], len: usize) -> f32 {
-    assert!(arr.len() > 0);
+    assert!(!arr.is_empty());
     let mask = mask(len % f32s::lanes());
     let mut iter = arr.iter().rev();
     let mut val = mask.select(*iter.next().unwrap(), f32s::splat(0.));
