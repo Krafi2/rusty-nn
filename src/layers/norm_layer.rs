@@ -1,4 +1,4 @@
-use super::{Layer, LayerArch, LayerBuilder, LayerType, OutShape};
+use super::{Layer, LayerArch, LayerBuilder, BasicLayer, OutShape};
 use crate::activation_functions::ActivFunc;
 use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;
@@ -126,7 +126,7 @@ impl<T: ActivFunc> Layer for NormLayer<T> {
         }
     }
     fn weight_count(&self) -> usize {
-        self.actual_size * 2 * f32s::lanes()
+        self.actual_size * 2
     }
 
     fn ready(&mut self) {}
@@ -159,9 +159,9 @@ impl<T: ActivFunc> NormLayer<T> {
     }
 }
 
-impl<T: ActivFunc> Into<LayerType> for NormLayer<T> {
-    fn into(self) -> LayerType {
-        LayerType::from(LayerArch::NormLayer(self))
+impl<T: ActivFunc> Into<BasicLayer> for NormLayer<T> {
+    fn into(self) -> BasicLayer {
+        BasicLayer::from(LayerArch::NormLayer(self))
     }
 }
 

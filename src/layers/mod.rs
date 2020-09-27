@@ -58,7 +58,7 @@ pub trait Layer {
     fn in_size(&self) -> usize;
     /// Get the shape of the output
     fn out_shape(&self) -> OutShape;
-    /// Get number of weights in the layer
+    /// Get number of weights in the layer in terms of f32s
     fn weight_count(&self) -> usize;
 
     /// This function should panic for all non-input layer types
@@ -89,7 +89,7 @@ pub enum LayerArch<T: ActivFunc> {
 
 #[enum_dispatch(Layer)]
 #[derive(Serialize, Deserialize, Clone)]
-pub enum LayerType {
+pub enum BasicLayer {
     Sigmoid(LayerArch<Sigmoid>),
     Identity(LayerArch<Identity>),
     TanH(LayerArch<TanH>),
@@ -100,7 +100,7 @@ pub enum LayerType {
 // The conversion is implemented like this instead of a trait, because the from trait is incompatible
 // with some trait definitions made by the enum_dispatch macro and this seems like the path of least resistance
 // as I don't think anyone will ever need to pass LayerArch as a generic argument needing the trait
-impl LayerType {
+impl BasicLayer {
     /// Convert from a generic LayerArch<T> into a LayerType
     fn from<T: ActivFunc>(l_arch: LayerArch<T>) -> Self {
         // Sound as long as each implementation of ActivFunc has the correct Kind

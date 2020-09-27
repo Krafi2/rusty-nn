@@ -12,7 +12,7 @@ use serde::{
 use super::{construction::LinearConstruction, Network};
 use crate::allocator::Mediator;
 use crate::f32s;
-use crate::helpers::{as_scalar, as_scalar_mut, least_size, zero_simd};
+use crate::helpers::{as_scalar, as_scalar_mut, zero_simd};
 use crate::layers::Layer;
 
 mod private_ {
@@ -314,7 +314,7 @@ impl fmt::Display for ConsError {
 			))
 			}
 		    ConsError::NotEnoughWeights { weights, expected } => {
-				f.write_fmt(format_args!("Expected at least {} weights but there are only {}.",
+				f.write_fmt(format_args!("Expected {} weights but only {} were provided.",
 					expected,
 					weights
 				))
@@ -322,7 +322,9 @@ impl fmt::Display for ConsError {
 		    ConsError::Empty => {
 				f.write_str("The network must have at least a single layer, but it was empty.")
 			}
-		}
+        }?;
+        f.write_str(" Error occured while attempting to construct a network from file.")?;
+        Ok(())
     }
 }
 
@@ -351,8 +353,8 @@ impl<T: Layer + Clone> TryFrom<NetworkUnvalidated<T>> for FeedForward<T> {
         }
         if weights != value.weights.len() {
             return Err(ConsError::NotEnoughWeights {
-                weights,
-                expected: value.weights.len() * f32s::lanes(),
+                weights: value.weights.len() * f32s::lanes(),
+                expected: weights * f32s::lanes(),
             });
         }
         for l in &mut value.layers {
@@ -374,64 +376,48 @@ impl<'de> Visitor<'de> for SimdVisitor {
     where
         A: SeqAccess<'de>,
     {
+        let vec = 
         if let Some(len) = seq.size_hint() {
-            let mut vec: Vec<f32s> = Vec::with_capacity(least_size(len, f32s::lanes()));
-
-            let mut len = 0;
-            let cap = vec.capacity() * f32s::lanes();
-
-            unsafe {
-                let vec_: *mut f32 = vec.as_mut_ptr() as *mut f32;
-                while let Some(e) = seq.next_element()? {
-                    vec_.add(len).write(e);
-
-                    len += 1;
-                    if len > cap {
-                        panic!("size hint lied");
-                    }
-                }
-                assert!(len % f32s::lanes() == 0);
-                vec.set_len(len / f32s::lanes());
-                return Ok(vec);
+            if len % f32s::lanes() != 0 {
+                return Err(<A::Error as de::Error>::custom(format!(
+                    "Number of elements must be a multiple of {}, received: {}",
+                    f32s::lanes(),
+                    len,
+                )))
             }
-        } else {
-            //if the length isnt known, switch to this slower variant
-            let mut vec = Vec::new();
-
-            for len in 0.. {
-                vec.reserve(1);
-
-                unsafe {
-                    let vec_: *mut f32 = vec.as_mut_ptr() as *mut f32;
-                    let mut i = 0;
-                    while let Some(e) = seq.next_element()? {
-                        vec_.add(len * f32s::lanes() + i).write(e);
-                        i += 1;
-                        if i == f32s::lanes() {
-                            break;
-                        }
-                    }
-
-                    vec.set_len(len + 1);
-
-                    match i {
-                        //all lanes are initialized so we can safely return
-                        0 => return Ok(vec),
-                        //all lanes are initialized so we can continue
-                        x if x == f32s::lanes() => (),
-                        //some lanes were not initialized so we return an error
-                        _ => {
-                            return Err(<A::Error as de::Error>::custom(format!(
-                                "Number of elements must be a multiple of {}, received: {}",
-                                f32s::lanes(),
-                                len * f32s::lanes() + i
-                            )))
-                        }
-                    }
-                }
-            }
+            Vec::with_capacity(len / f32s::lanes())
         }
-        unreachable!()
+        else {
+            Vec::new()
+        };
+
+        let len = vec.len();
+        let cap = vec.capacity();
+        // we create the float vector this way to ensure alignment
+        let mut vec =
+        unsafe {
+            Vec::from_raw_parts(vec.leak().as_mut_ptr() as *mut f32, len * f32s::lanes(), cap * f32s::lanes())
+        };
+
+        while let Some(e) = seq.next_element()? {
+            vec.push(e);
+        }
+
+        if vec.len() % f32s::lanes() != 0 {
+            return Err(<A::Error as de::Error>::custom(format!(
+                "Number of elements must be a multiple of {}, received: {}",
+                f32s::lanes(),
+                vec.len(),
+            )))
+        }
+
+        vec.shrink_to_fit();
+        
+        let len = vec.len();
+        let cap = vec.capacity();
+        unsafe {
+            Ok(Vec::from_raw_parts(vec.leak().as_mut_ptr() as *mut f32s, len / f32s::lanes(), cap / f32s::lanes()))
+        }
     }
 }
 

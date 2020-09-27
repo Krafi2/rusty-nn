@@ -1,4 +1,4 @@
-use rusty_nn::layers::LayerType;
+use rusty_nn::layers::BasicLayer;
 use rusty_nn::network::{FeedForward, Network};
 use rusty_nn::trainer::Trainer;
 
@@ -15,7 +15,7 @@ fn save_and_load() -> anyhow::Result<()> {
         .network()
         .try_save("temporary_file_to_test_whether_saving_works".as_ref())?;
     let network =
-        FeedForward::<LayerType>::from_file("temporary_file_to_test_whether_saving_works")?;
+        FeedForward::<BasicLayer>::from_file("temporary_file_to_test_whether_saving_works")?;
     std::fs::remove_file("temporary_file_to_test_whether_saving_works")?;
 
     let mut trainer = common::trainer_from_nn(network);

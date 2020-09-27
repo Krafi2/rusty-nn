@@ -1,4 +1,4 @@
-use super::{Layer, LayerArch, LayerBuilder, LayerType, OutShape};
+use super::{Layer, LayerArch, LayerBuilder, BasicLayer, OutShape};
 use crate::activation_functions::Identity;
 use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;
@@ -86,9 +86,9 @@ impl InputLayer {
     }
 }
 
-impl Into<LayerType> for InputLayer {
-    fn into(self) -> LayerType {
-        LayerType::from(LayerArch::InputLayer::<Identity>(self))
+impl Into<BasicLayer> for InputLayer {
+    fn into(self) -> BasicLayer {
+        BasicLayer::from(LayerArch::InputLayer::<Identity>(self))
     }
 }
 

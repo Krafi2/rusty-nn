@@ -1,4 +1,4 @@
-use super::{Layer, LayerArch, LayerBuilder, LayerType, OutShape};
+use super::{Layer, LayerArch, LayerBuilder, BasicLayer, OutShape};
 use crate::activation_functions::ActivFunc;
 use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;
@@ -182,7 +182,7 @@ impl<T: ActivFunc> Layer for DenseLayer<T> {
         }
     }
     fn weight_count(&self) -> usize {
-        self.actual_in * self.size + self.actual_size * f32s::lanes()
+        self.actual_in * self.size + self.actual_size
     }
 
     fn ready(&mut self) {}
@@ -251,8 +251,8 @@ impl<T: ActivFunc, I: Initializer> LayerBuilder for DenseBuilder<T, I> {
     }
 }
 
-impl<T: ActivFunc> Into<LayerType> for DenseLayer<T> {
-    fn into(self) -> LayerType {
-        LayerType::from(LayerArch::DenseLayer(self))
+impl<T: ActivFunc> Into<BasicLayer> for DenseLayer<T> {
+    fn into(self) -> BasicLayer {
+        BasicLayer::from(LayerArch::DenseLayer(self))
     }
 }
