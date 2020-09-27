@@ -8,10 +8,9 @@ edition = "2018"
 [dependencies]
 rand = {version = "0.7.3", features = ["small_rng"]}
 rand_distr = "0.3"
-# itertools-num = "0.1.3"
 serde = { version = "1.0.116", features = ["derive"] }
 serde_json = "1.0.57"
 enum_dispatch = "0.3.3"
-small_table = {path = "../small_table"}
+small_table = {git = "https://github.com/Krafi2/small-table.git"}
 packed_simd = "0.3.3"
 anyhow = "1.0.32"
