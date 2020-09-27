@@ -3,7 +3,7 @@ use crate::activation_functions::ActivFunc;
 use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;
 use crate::helpers::{
-    empty_vec_simd, least_size, simd_to_iter, simd_with, splat_n, to_scalar, to_scalar_mut,
+    as_scalar, as_scalar_mut, empty_vec_simd, least_size, simd_to_iter, simd_with, splat_n,
 };
 use crate::initializer::Initializer;
 
@@ -45,9 +45,9 @@ impl<T: ActivFunc> Layer for NormLayer<T> {
             *wi = inp.mul_add(*w, *b);
         }
 
-        for (wi, o) in to_scalar(&self.weighted_inputs)
+        for (wi, o) in as_scalar(&self.weighted_inputs)
             .iter()
-            .zip(to_scalar_mut(&mut self.activations))
+            .zip(as_scalar_mut(&mut self.activations))
         {
             *o = T::evaluate(*wi);
         }
@@ -60,7 +60,7 @@ impl<T: ActivFunc> Layer for NormLayer<T> {
         inputs: &[f32s],
         in_deriv: &[f32s],
         out_deriv: &mut [f32s],
-    ) {
+    ) -> Result<(), ()> {
         let w_grad = self_deriv.get_mut(&mut self.w_gradients);
         let b_grad = self_deriv.get_mut(&mut self.b_gradients);
         let weights = weights.get(&self.weights);
@@ -94,36 +94,44 @@ impl<T: ActivFunc> Layer for NormLayer<T> {
             *wd += af_deriv * *inp;
             *od = af_deriv * *w;
         }
+        Ok(())
     }
 
     fn debug(&self, med: Mediator<&[f32s], WeightHndl>) -> String {
         Table::new(self.size, 6, 2)
             .line()
-            .with_caption("w", to_scalar(&med.get(&self.weights)))
-            .with_caption("b", to_scalar(&med.get(&self.biases)))
+            .with_caption("w", as_scalar(&med.get(&self.weights)))
+            .with_caption("b", as_scalar(&med.get(&self.biases)))
             .line()
-            .with_caption("a", to_scalar(&self.activations))
+            .with_caption("a", as_scalar(&self.activations))
             .line()
             .build()
     }
 
-    fn get_output(&self) -> &[f32s] {
+    fn output(&self) -> &[f32s] {
         &self.activations
     }
-    fn get_size(&self) -> usize {
+    fn out_size(&self) -> usize {
         self.size
     }
-    fn get_in_size(&self) -> usize {
+    fn actual_out(&self) -> usize {
+        self.actual_size
+    }
+    fn in_size(&self) -> usize {
         self.size
     }
     fn out_shape(&self) -> OutShape {
         OutShape {
-            dims: vec![self.get_size()],
+            dims: vec![self.out_size()],
         }
     }
-    fn get_weight_count(&self) -> usize {
-        self.size * 2
+    fn weight_count(&self) -> usize {
+        self.actual_size * 2 * f32s::lanes()
     }
+
+    fn ready(&mut self) {}
+
+    fn unready(&mut self) {}
 }
 impl<T: ActivFunc> NormLayer<T> {
     pub fn new<I: Initializer>(mut init: I, mut alloc: Allocator, size: usize) -> Self {
@@ -173,9 +181,10 @@ impl<T: ActivFunc, I: Initializer> NormBuilder<T, I> {
 
 impl<T: ActivFunc, I: Initializer> LayerBuilder for NormBuilder<T, I> {
     type Output = NormLayer<T>;
-    fn connect(self, shape: Option<OutShape>, alloc: Allocator) -> Self::Output {
-        let shape = shape
-            .expect("A NormLayer cannot be the input layer of a network, use a specialized layer");
+    fn connect(self, previous: Option<&dyn Layer>, alloc: Allocator) -> Self::Output {
+        let shape = previous
+            .expect("A NormLayer cannot be the input layer of a network, use a specialized layer")
+            .out_shape();
         let in_size = shape.dims.iter().product();
         NormLayer::new(self.init, alloc, in_size)
     }

@@ -10,22 +10,32 @@ use self::dense_layer::DenseLayer;
 use self::input_layer::InputLayer;
 use self::norm_layer::NormLayer;
 
+use crate::activation_functions::*;
 use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;
 
-use crate::activation_functions::*;
 use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Serialize};
 
+//TODO maybe remove the Clone bound
 #[enum_dispatch]
-pub trait Layer: Clone {
-    ///Reallocate memory needed for evaluation.
-    ///Used after deserialization as this memory doesnt need to be serialized.
+pub trait Layer {
+    /// Reallocate memory needed for evaluation.
+    /// Used after deserialization as this memory doesnt need to be serialized.
     fn rebuild(&mut self);
+
     /// Evaluate the layer's output.
     fn eval(&mut self, inputs: &[f32s], med: Mediator<&[f32s], WeightHndl>);
+
+    /// Ready the network for optimization, if already readied do nothing.
+    fn ready(&mut self);
+
+    /// Undo the changes made by ready; if the network isn't readied do nothing.
+    fn unready(&mut self);
+
     /// Calculates derivatives of the layer's weights. `in_deriv` are the partial derivatives at the end of the next layer
-    /// and `out_deriv` are the derivatives at the layer's input.
+    /// and `out_deriv` are the derivatives at the layer's input, which will be filled in.
+    /// Returns None if the layer isn't readied.
     fn calculate_derivatives(
         &mut self,
         weights: Mediator<&[f32s], WeightHndl>,
@@ -33,33 +43,35 @@ pub trait Layer: Clone {
         inputs: &[f32s],
         in_deriv: &[f32s],
         out_deriv: &mut [f32s],
-    );
+    ) -> Result<(), ()>;
+
     /// Return string containing formated debug information
     fn debug(&self, med: Mediator<&[f32s], WeightHndl>) -> String;
 
-    //getters and setters
     /// Get layer's output
-    fn get_output(&self) -> &[f32s];
-    /// Get layer's size
-    fn get_size(&self) -> usize;
+    fn output(&self) -> &[f32s];
+    /// Get layer's output size
+    fn out_size(&self) -> usize;
+    /// Get the actual size of the output in terms of f32s
+    fn actual_out(&self) -> usize;
     /// Get layer's input size
-    fn get_in_size(&self) -> usize;
-
-    fn get_weight_count(&self) -> usize;
-
+    fn in_size(&self) -> usize;
+    /// Get the shape of the output
     fn out_shape(&self) -> OutShape;
+    /// Get number of weights in the layer
+    fn weight_count(&self) -> usize;
 
     /// This function should panic for all non-input layer types
     fn set_activations(&mut self, _activations: &[f32]) {
-        panic!("set_activations not implemented for this layer type")
+        unimplemented!("set_activations not implemented for this layer type")
     }
 }
 
-/// Trait all layer builder must implement in order to be added to a NetworkBuilder via the add function.
+/// Trait all layer builders must implement in order to be added to a NetworkBuilder via the add function.
 pub trait LayerBuilder {
     type Output: Layer;
     /// Connect a layer to the previous one. `shape` will be None if there are no layers before.
-    fn connect(self, shape: Option<OutShape>, alloc: Allocator) -> Self::Output;
+    fn connect(self, previous: Option<&dyn Layer>, alloc: Allocator) -> Self::Output;
 }
 
 #[derive(Clone)]

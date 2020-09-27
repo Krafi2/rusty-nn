@@ -1,36 +1,24 @@
-use rusty_nn::loss_functions::SquaredError;
-use rusty_nn::network::Network;
-use rusty_nn::optimizer::GradientDescent;
-use rusty_nn::trainer::{DefaultBuilder, Trainer, TrainerBuilder, TrainingConfig};
+use rusty_nn::layers::LayerType;
+use rusty_nn::network::{FeedForward, Network};
+use rusty_nn::trainer::Trainer;
 
 mod common;
 
 #[test]
 fn save_and_load() -> anyhow::Result<()> {
     let mut trainer = common::basic_trainer();
-    (&mut trainer).for_each(|_| ());
+    trainer.train()?;
 
-    assert!(trainer.tb().loss() < 0.0001); //assert we have converged
+    assert!(trainer.tb().loss() < 0.0001); //assert we've converged
 
     trainer
         .network()
-        .save("temporary_file_to_test_whether_saving_works")?;
-    let network = Network::from_file("temporary_file_to_test_whether_saving_works")?;
+        .try_save("temporary_file_to_test_whether_saving_works".as_ref())?;
+    let network =
+        FeedForward::<LayerType>::from_file("temporary_file_to_test_whether_saving_works")?;
     std::fs::remove_file("temporary_file_to_test_whether_saving_works")?;
 
-    let config = TrainingConfig {
-        batch_size: 10,
-        epoch_count: 1,
-        learning_rate: 0.,
-        weight_decay: 0.,
-    };
-
-    let optimizer = GradientDescent::<SquaredError>::new(network);
-    let mut trainer = DefaultBuilder::new()
-        .optimizer(optimizer)
-        .training_data(common::t_data())
-        .config(config)
-        .build();
+    let mut trainer = common::trainer_from_nn(network);
 
     trainer.do_epoch()?; //test training still works
     trainer.do_batch()?;

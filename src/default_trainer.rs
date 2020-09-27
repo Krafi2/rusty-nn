@@ -2,16 +2,17 @@ use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
 
-use crate::optimizer::Optimizer;
+use crate::optimizer::OptimizerManager;
 use crate::trainer::{BuilderBase, Trainer, TrainerBase, TrainerBuilder};
 
-pub struct DefaultTrainer<O: Optimizer, U: AsRef<[f32]>> {
+pub struct DefaultTrainer<O: OptimizerManager, U: AsRef<[f32]>> {
     tb: TrainerBase<O>,
     t_data: Vec<U>, //training data
     rng: SmallRng,
 }
 
-impl<O: 'static + Optimizer, U: AsRef<[f32]>> Trainer<O> for DefaultTrainer<O, U> {
+impl<O: OptimizerManager, U: AsRef<[f32]>> Trainer for DefaultTrainer<O, U> {
+    type Optimizer = O;
     ///get immutable reference to the TrainerBase object
     fn tb(&self) -> &TrainerBase<O> {
         &self.tb
@@ -33,7 +34,7 @@ impl<O: 'static + Optimizer, U: AsRef<[f32]>> Trainer<O> for DefaultTrainer<O, U
     }
 }
 
-impl<O: 'static + Optimizer, U: AsRef<[f32]>> Iterator for DefaultTrainer<O, U> {
+impl<O: OptimizerManager, U: AsRef<[f32]>> Iterator for DefaultTrainer<O, U> {
     type Item = anyhow::Result<f32>;
     fn next(&mut self) -> Option<Self::Item> {
         (|| {
@@ -48,12 +49,12 @@ impl<O: 'static + Optimizer, U: AsRef<[f32]>> Iterator for DefaultTrainer<O, U> 
     }
 }
 
-pub struct DefaultBuilder<O: Optimizer, U: AsRef<[f32]>> {
+pub struct DefaultBuilder<O: OptimizerManager, U: AsRef<[f32]>> {
     base: BuilderBase<O>,
 
     t_data: Option<Vec<U>>,
 }
-impl<O: Optimizer, U: AsRef<[f32]>> DefaultBuilder<O, U> {
+impl<O: OptimizerManager, U: AsRef<[f32]>> DefaultBuilder<O, U> {
     pub fn new() -> Self {
         DefaultBuilder {
             base: BuilderBase::new(),
@@ -77,13 +78,13 @@ impl<O: Optimizer, U: AsRef<[f32]>> DefaultBuilder<O, U> {
     }
 }
 
-impl<O: Optimizer, U: AsRef<[f32]>> Default for DefaultBuilder<O, U> {
+impl<O: OptimizerManager, U: AsRef<[f32]>> Default for DefaultBuilder<O, U> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<O: Optimizer, U: AsRef<[f32]>> TrainerBuilder<O> for DefaultBuilder<O, U> {
+impl<O: OptimizerManager, U: AsRef<[f32]>> TrainerBuilder<O> for DefaultBuilder<O, U> {
     fn bb(&self) -> &BuilderBase<O> {
         &self.base
     }

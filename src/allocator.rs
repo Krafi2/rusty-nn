@@ -63,8 +63,9 @@ impl<'a, T: 'a, H: Handle> Mediator<'a, T, H> {
         }
     }
 }
-impl<'a, T: 'a, H: Handle, U: 'a> Mediator<'a, T, H>
+impl<'a, T: 'a, U: 'a, H> Mediator<'a, T, H>
 where
+    H: Handle,
     T: Deref<Target = U>,
     U: Index<Range<usize>>,
     U: ?Sized,
@@ -86,8 +87,9 @@ where
         }
     }
 }
-impl<'a, T: 'a, H: Handle, U: 'a> Mediator<'a, T, H>
+impl<'a, T: 'a, H, U: 'a> Mediator<'a, T, H>
 where
+    H: Handle,
     T: DerefMut<Target = U>,
     U: IndexMut<Range<usize>>,
     U: ?Sized,
@@ -121,11 +123,11 @@ impl<'a> Allocator<'a> {
         self.0.extend(std::iter::repeat(f32s::splat(0.)).take(n));
         (WeightHndl(handle.clone()), GradHdnl(handle))
     }
-    /// Allocates n elements calling init to get their value
-    pub fn allocate_with<T: FnMut() -> f32>(
+    /// Allocates n elements by calling init to get their value
+    pub fn allocate_with<F: FnMut() -> f32>(
         &mut self,
         n: usize,
-        mut init: T,
+        mut init: F,
     ) -> (WeightHndl, GradHdnl) {
         let handle = VecHndl {
             range: self.0.len()..self.0.len() + n,
@@ -133,22 +135,21 @@ impl<'a> Allocator<'a> {
         self.0.reserve(n);
 
         unsafe {
-            self.0.set_len(self.0.len() + 1); //so that the call to last cant fail and we can begin indexing right at `last`
-            let ptr: *mut f32 = std::mem::transmute(self.0.last().unwrap());
+            let ptr: *mut f32 = std::mem::transmute(self.0.as_mut_ptr());
             for i in 0..n * f32s::lanes() {
                 let val = init();
                 ptr.add(i).write(val)
             }
-            self.0.set_len(self.0.len() + n - 1); // -1 because we allocated an extra one before
+            self.0.set_len(self.0.len() + n);
         }
         (WeightHndl(handle.clone()), GradHdnl(handle))
     }
-    pub fn new(vec: &'a mut Vec<f32s>) -> Allocator<'a> {
+    pub fn new(vec: &'a mut Vec<f32s>) -> Self {
         Allocator(vec)
     }
 }
 
-/// Constructs a handle which has no effect and when used returns an empty slice.
+/// Constructs a new handle which has no effect and when used returns an empty slice.
 pub fn invalid_handle<T: Handle>() -> T {
     T::new(VecHndl { range: 0..0 })
 }

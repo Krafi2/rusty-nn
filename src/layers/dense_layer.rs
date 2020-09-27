@@ -2,7 +2,7 @@ use super::{Layer, LayerArch, LayerBuilder, LayerType, OutShape};
 use crate::activation_functions::ActivFunc;
 use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;
-use crate::helpers::{empty_vec_simd, least_size, splat_n, sum, to_scalar, to_scalar_mut};
+use crate::helpers::{as_scalar, as_scalar_mut, empty_vec_simd, least_size, splat_n, sum};
 use crate::initializer::Initializer;
 
 use serde::{Deserialize, Serialize};
@@ -53,7 +53,7 @@ impl<T: ActivFunc> Layer for DenseLayer<T> {
 
         for (weights, weighted_input) in weights
             .chunks_exact(self.actual_in)
-            .zip(to_scalar_mut(&mut self.weighted_inputs))
+            .zip(as_scalar_mut(&mut self.weighted_inputs))
         {
             //TODO test if mul_add is faster
             for ((inp, w), temp) in inputs.iter().zip(weights).zip(&mut self.temp) {
@@ -66,9 +66,9 @@ impl<T: ActivFunc> Layer for DenseLayer<T> {
             *wi += *b;
         }
 
-        for (wi, o) in to_scalar(&self.weighted_inputs)
+        for (wi, o) in as_scalar(&self.weighted_inputs)
             .iter()
-            .zip(to_scalar_mut(&mut self.activations))
+            .zip(as_scalar_mut(&mut self.activations))
         {
             *o = T::evaluate(*wi)
         }
@@ -81,7 +81,7 @@ impl<T: ActivFunc> Layer for DenseLayer<T> {
         inputs: &[f32s],
         in_deriv: &[f32s],
         out_deriv: &mut [f32s],
-    ) {
+    ) -> Result<(), ()> {
         let mut b_grad = self_deriv.get_mut(&mut self.b_gradients);
         let mut w_grad = self_deriv.get_mut(&mut self.w_gradients);
         let weights = weights.get(&self.weights);
@@ -98,10 +98,10 @@ impl<T: ActivFunc> Layer for DenseLayer<T> {
         assert!(self.actual_in <= out_deriv.len());
 
         // compute activation function derivatives
-        for ((temp, inp), out) in to_scalar_mut(&mut self.temp)
+        for ((temp, inp), out) in as_scalar_mut(&mut self.temp)
             .iter_mut()
-            .zip(to_scalar(&self.weighted_inputs))
-            .zip(to_scalar(&self.activations))
+            .zip(as_scalar(&self.weighted_inputs))
+            .zip(as_scalar(&self.activations))
         {
             *temp = T::derivative(*inp, *out);
         }
@@ -117,7 +117,7 @@ impl<T: ActivFunc> Layer for DenseLayer<T> {
         // compute weight derivative
         for (wds, temp) in w_grad
             .chunks_exact_mut(self.actual_in)
-            .zip(to_scalar(&self.temp))
+            .zip(as_scalar(&self.temp))
         {
             let af_deriv = f32s::splat(*temp);
             for (wd, inp) in wds.iter_mut().zip(inputs) {
@@ -128,13 +128,14 @@ impl<T: ActivFunc> Layer for DenseLayer<T> {
         //compute output derivatives
         for (weights, temp) in weights
             .chunks_exact(self.actual_in)
-            .zip(to_scalar(&self.temp))
+            .zip(as_scalar(&self.temp))
         {
             let af_deriv = f32s::splat(*temp);
             for (od, w) in out_deriv.iter_mut().zip(weights) {
                 *od += *w * af_deriv;
             }
         }
+        Ok(())
     }
 
     fn debug(&self, med: Mediator<&[f32s], WeightHndl>) -> String {
@@ -148,38 +149,45 @@ impl<T: ActivFunc> Layer for DenseLayer<T> {
             .rows(
                 med.get(&self.weights)
                     .chunks(self.actual_in)
-                    .zip(to_scalar(&med.get(&self.biases)))
+                    .zip(as_scalar(&med.get(&self.biases)))
                     .map(|(chunk, bias)| {
-                        to_scalar(chunk)
+                        as_scalar(chunk)
                             .iter()
                             .take(self.in_size)
                             .chain(std::iter::once(bias))
                     }),
             )
             .line()
-            .with_caption("a", to_scalar(&self.activations))
+            .with_caption("a", as_scalar(&self.activations))
             .line()
             .build();
         s
     }
 
-    fn get_output(&self) -> &[f32s] {
+    fn output(&self) -> &[f32s] {
         &self.activations
     }
-    fn get_size(&self) -> usize {
+    fn out_size(&self) -> usize {
         self.size
     }
-    fn get_in_size(&self) -> usize {
+    fn actual_out(&self) -> usize {
+        self.actual_size
+    }
+    fn in_size(&self) -> usize {
         self.in_size
     }
     fn out_shape(&self) -> OutShape {
         OutShape {
-            dims: vec![self.get_size()],
+            dims: vec![self.out_size()],
         }
     }
-    fn get_weight_count(&self) -> usize {
-        (self.in_size + 1) * self.size
+    fn weight_count(&self) -> usize {
+        self.actual_in * self.size + self.actual_size * f32s::lanes()
     }
+
+    fn ready(&mut self) {}
+
+    fn unready(&mut self) {}
 }
 
 impl<T: ActivFunc> DenseLayer<T> {
@@ -235,10 +243,10 @@ impl<T: ActivFunc, I: Initializer> DenseBuilder<T, I> {
 impl<T: ActivFunc, I: Initializer> LayerBuilder for DenseBuilder<T, I> {
     type Output = DenseLayer<T>;
 
-    fn connect(self, shape: Option<OutShape>, alloc: Allocator) -> Self::Output {
-        let shape = shape
+    fn connect(self, previous: Option<&dyn Layer>, alloc: Allocator) -> Self::Output {
+        let previous = previous
             .expect("A DenseLayer cannot be the input layer of a network, use a specialized layer");
-        let in_size = shape.dims.iter().product();
+        let in_size = previous.out_shape().dims.iter().product();
         DenseLayer::new(self.init, alloc, in_size, self.size)
     }
 }

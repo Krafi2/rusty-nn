@@ -2,7 +2,7 @@ use super::{Layer, LayerArch, LayerBuilder, LayerType, OutShape};
 use crate::activation_functions::Identity;
 use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;
-use crate::helpers::{empty_vec_simd, least_size, to_scalar, to_scalar_mut};
+use crate::helpers::{as_scalar, as_scalar_mut, empty_vec_simd, least_size};
 
 use serde::{Deserialize, Serialize};
 use small_table::Table;
@@ -31,41 +31,48 @@ impl Layer for InputLayer {
         _inputs: &[f32s],
         _in_deriv: &[f32s],
         _out_deriv: &mut [f32s],
-    ) {
+    ) -> Result<(), ()> {
         panic!("Input layers cannot calculate derivatives")
     }
 
     fn debug(&self, _med: Mediator<&[f32s], WeightHndl>) -> String {
         Table::new(self.size, 6, 2)
             .line()
-            .row(to_scalar(&self.activations))
+            .row(as_scalar(&self.activations))
             .line()
             .build()
     }
 
-    fn get_output(&self) -> &[f32s] {
+    fn output(&self) -> &[f32s] {
         &self.activations
     }
-    fn get_size(&self) -> usize {
+    fn out_size(&self) -> usize {
         self.size
     }
-    fn get_in_size(&self) -> usize {
+    fn actual_out(&self) -> usize {
+        self.actual_size
+    }
+    fn in_size(&self) -> usize {
         0
     }
     fn out_shape(&self) -> OutShape {
         OutShape {
-            dims: vec![self.get_size()],
+            dims: vec![self.out_size()],
         }
     }
-    fn get_weight_count(&self) -> usize {
+    fn weight_count(&self) -> usize {
         0
     }
 
     /// Force set the layer's activations
     fn set_activations(&mut self, activations: &[f32]) {
         //copy the slice, leaving any extra elements as they are so copy_from_slice doesn't panic
-        to_scalar_mut(&mut self.activations)[..self.size].copy_from_slice(activations);
+        as_scalar_mut(&mut self.activations)[..self.size].copy_from_slice(activations);
     }
+
+    fn ready(&mut self) {}
+
+    fn unready(&mut self) {}
 }
 
 impl InputLayer {
@@ -96,8 +103,8 @@ impl InputBuilder {
 
 impl LayerBuilder for InputBuilder {
     type Output = InputLayer;
-    fn connect(self, shape: Option<OutShape>, _alloc: Allocator) -> Self::Output {
-        if shape.is_some() {
+    fn connect(self, previous: Option<&dyn Layer>, _alloc: Allocator) -> Self::Output {
+        if previous.is_some() {
             panic!("There can't be any layers before InputLayer")
         }
         InputLayer::new(self.size)
