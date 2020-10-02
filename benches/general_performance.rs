@@ -25,9 +25,9 @@ fn training_speed(b: &mut Bencher) {
     let mut xavier = XavierInit::new();
     let network: FeedForward<BasicLayer> = LinearBuilder::new()
         .add(InputBuilder::new(1))
-        .add(DenseBuilder::<Sigmoid, _>::new(&mut xavier, 100))
-        .add(DenseBuilder::<Sigmoid, _>::new(&mut xavier, 100))
-        .add(DenseBuilder::<Sigmoid, _>::new(&mut xavier, 1))
+        .add(DenseBuilder::<Sigmoid, _>::new(&mut xavier, 100, true, true))
+        .add(DenseBuilder::<Sigmoid, _>::new(&mut xavier, 100, true, true))
+        .add(DenseBuilder::<Sigmoid, _>::new(&mut xavier, 1, true, true))
         .build()
         .unwrap();
 

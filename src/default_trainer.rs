@@ -4,6 +4,7 @@ use rand::SeedableRng;
 
 use crate::optimizer::OptimizerManager;
 use crate::trainer::{BuilderBase, Trainer, TrainerBase, TrainerBuilder};
+use crate::network::Network;
 
 pub struct DefaultTrainer<O: OptimizerManager, U: AsRef<[f32]>> {
     tb: TrainerBase<O>,
@@ -54,6 +55,7 @@ pub struct DefaultBuilder<O: OptimizerManager, U: AsRef<[f32]>> {
 
     t_data: Option<Vec<U>>,
 }
+
 impl<O: OptimizerManager, U: AsRef<[f32]>> DefaultBuilder<O, U> {
     pub fn new() -> Self {
         DefaultBuilder {
@@ -92,3 +94,30 @@ impl<O: OptimizerManager, U: AsRef<[f32]>> TrainerBuilder<O> for DefaultBuilder<
         &mut self.base
     }
 }
+
+impl<O: OptimizerManager, U: AsRef<[f32]>> DefaultTrainer<O, U> {
+    pub fn set_data(&mut self, data: Vec<U>) {
+        self.t_data = data;
+        self.tb.change_data_len(self.t_data.len());
+    }
+}
+
+impl<O: OptimizerManager, U: AsRef<[f32]>> std::ops::Deref for DefaultTrainer<O, U> {
+    type Target = O::Network;
+
+    fn deref(&self) -> &Self::Target {
+        self.tb.optimizer.net()
+    }
+}
+
+impl<O: OptimizerManager, U: AsRef<[f32]>> std::ops::DerefMut for DefaultTrainer<O, U> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.tb.optimizer.net_mut()
+    }
+}
+
+// impl<O: OptimizerManager, U: AsRef<[f32]>> Into<O> for DefaultTrainer<O, U> {
+//     fn into(self) -> O {
+//         self.tb.optimizer
+//     }
+// }

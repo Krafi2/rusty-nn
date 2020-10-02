@@ -14,6 +14,7 @@ pub enum AFunc {
     TanH,
     SiLU,
     ReLU,
+    Unknown,
 }
 
 pub trait ActivFunc: Clone {

@@ -23,6 +23,9 @@ pub struct DenseLayer<T: ActivFunc> {
     w_gradients: GradHdnl, //handle to weight gradients
     b_gradients: GradHdnl, //handle to bias gradients
 
+    update_weights: bool,
+    update_biases: bool,
+    
     #[serde(skip, default = "empty_vec_simd")]
     weighted_inputs: Vec<f32s>, //size of actual_size
     #[serde(skip, default = "empty_vec_simd")]
@@ -110,20 +113,25 @@ impl<T: ActivFunc> Layer for DenseLayer<T> {
         }
 
         // compute bias derivatives
-        for (bd, temp) in b_grad.iter_mut().zip(&self.temp) {
-            *bd += *temp;
+        if self.update_biases {
+            for (bd, temp) in b_grad.iter_mut().zip(&self.temp) {
+                *bd += *temp;
+            }
         }
 
         // compute weight derivative
-        for (wds, temp) in w_grad
-            .chunks_exact_mut(self.actual_in)
-            .zip(as_scalar(&self.temp))
-        {
-            let af_deriv = f32s::splat(*temp);
-            for (wd, inp) in wds.iter_mut().zip(inputs) {
-                *wd += *inp * af_deriv;
+        if self.update_weights {
+            for (wds, temp) in w_grad
+                .chunks_exact_mut(self.actual_in)
+                .zip(as_scalar(&self.temp))
+            {
+                let af_deriv = f32s::splat(*temp);
+                for (wd, inp) in wds.iter_mut().zip(inputs) {
+                    *wd += *inp * af_deriv;
             }
         }
+        }
+        
 
         //compute output derivatives
         for (weights, temp) in weights
@@ -196,6 +204,8 @@ impl<T: ActivFunc> DenseLayer<T> {
         mut alloc: Allocator,
         in_size: usize,
         size: usize,
+        update_w: bool,
+        update_b: bool,
     ) -> DenseLayer<T> {
         let actual_in = least_size(in_size, f32s::lanes());
         let actual_size = least_size(size, f32s::lanes());
@@ -214,6 +224,8 @@ impl<T: ActivFunc> DenseLayer<T> {
             biases: b_handles.0,
             w_gradients: w_handles.1,
             b_gradients: b_handles.1,
+            update_weights: update_w,
+            update_biases: update_b,
             weighted_inputs: vec![],
             activations: vec![],
             temp: vec![],
@@ -227,14 +239,18 @@ impl<T: ActivFunc> DenseLayer<T> {
 pub struct DenseBuilder<T: ActivFunc, I: Initializer> {
     init: I,
     size: usize,
+    update_w: bool,
+    update_b: bool,
     marker_: std::marker::PhantomData<*const T>,
 }
 
 impl<T: ActivFunc, I: Initializer> DenseBuilder<T, I> {
-    pub fn new(init: I, size: usize) -> Self {
+    pub fn new(init: I, size: usize, update_w: bool, update_b: bool) -> Self {
         DenseBuilder {
             init,
             size,
+            update_w,
+            update_b,
             marker_: std::marker::PhantomData,
         }
     }
@@ -247,7 +263,7 @@ impl<T: ActivFunc, I: Initializer> LayerBuilder for DenseBuilder<T, I> {
         let previous = previous
             .expect("A DenseLayer cannot be the input layer of a network, use a specialized layer");
         let in_size = previous.out_shape().dims.iter().product();
-        DenseLayer::new(self.init, alloc, in_size, self.size)
+        DenseLayer::new(self.init, alloc, in_size, self.size, self.update_w, self.update_b)
     }
 }
 

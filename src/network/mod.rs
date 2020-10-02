@@ -1,5 +1,5 @@
-mod construction;
-mod feed_forward;
+pub mod construction;
+pub mod feed_forward;
 
 pub use self::construction::LinearBuilder;
 pub use self::feed_forward::FeedForward;
@@ -8,11 +8,6 @@ use crate::f32s;
 use crate::helpers::as_scalar_mut;
 
 use std::path::Path;
-
-/// Marker trait for numeric types used by networks.
-pub trait Numeric: Copy + Default {}
-impl Numeric for f32s {}
-impl Numeric for f32 {}
 
 /// Trait all neural network architectures must implement
 pub trait Network {

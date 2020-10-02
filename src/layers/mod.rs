@@ -1,6 +1,6 @@
-mod dense_layer;
-mod input_layer;
-mod norm_layer;
+pub mod dense_layer;
+pub mod input_layer;
+pub mod norm_layer;
 
 pub use dense_layer::DenseBuilder;
 pub use input_layer::InputBuilder;
@@ -16,6 +16,8 @@ use crate::f32s;
 
 use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Serialize};
+
+use std::ops::{Deref, DerefMut};
 
 //TODO maybe remove the Clone bound
 #[enum_dispatch]
@@ -63,7 +65,7 @@ pub trait Layer {
 
     /// This function should panic for all non-input layer types
     fn set_activations(&mut self, _activations: &[f32]) {
-        unimplemented!("set_activations not implemented for this layer type")
+        unimplemented!("set_activations not implemented for {}", std::any::type_name::<Self>())
     }
 }
 
@@ -114,7 +116,69 @@ impl BasicLayer {
                 AFunc::TanH => Self::TanH(std::mem::transmute(l_arch)),
                 AFunc::SiLU => Self::SiLU(std::mem::transmute(l_arch)),
                 AFunc::ReLU => Self::ReLU(std::mem::transmute(l_arch)),
+                AFunc::Unknown => panic!("Encountered unknown layer type while converting into BasicLayer"),
             }
         }
+    }
+}
+
+impl <T: Layer + ?Sized> Layer for Box<T> {
+    fn rebuild(&mut self) {
+        <Self as DerefMut>::deref_mut(self).rebuild()
+    }
+
+    fn eval(&mut self, inputs: &[f32s], med: Mediator<&[f32s], WeightHndl>) {
+        <Self as DerefMut>::deref_mut(self).eval(inputs, med)
+    }
+
+    fn ready(&mut self) {
+        <Self as DerefMut>::deref_mut(self).ready()
+    }
+
+    fn unready(&mut self) {
+        <Self as DerefMut>::deref_mut(self).unready()
+    }
+
+    fn calculate_derivatives(
+        &mut self,
+        weights: Mediator<&[f32s], WeightHndl>,
+        self_deriv: Mediator<&mut [f32s], GradHdnl>,
+        inputs: &[f32s],
+        in_deriv: &[f32s],
+        out_deriv: &mut [f32s],
+    ) -> Result<(), ()> {
+        <Self as DerefMut>::deref_mut(self).calculate_derivatives(weights, self_deriv, inputs, in_deriv, out_deriv)
+    }
+
+    fn debug(&self, med: Mediator<&[f32s], WeightHndl>) -> String {
+        <Self as Deref>::deref(self).debug(med)
+    }
+
+    fn output(&self) -> &[f32s] {
+        <Self as Deref>::deref(self).output()
+    }
+
+    fn out_size(&self) -> usize {
+        <Self as Deref>::deref(self).out_size()
+    }
+
+    fn actual_out(&self) -> usize {
+        <Self as Deref>::deref(self).actual_out()
+    }
+
+    fn in_size(&self) -> usize {
+        <Self as Deref>::deref(self).in_size()
+    }
+
+    fn out_shape(&self) -> OutShape {
+        <Self as Deref>::deref(self).out_shape()
+    }
+
+    fn weight_count(&self) -> usize {
+        <Self as Deref>::deref(self).weight_count()
+    }
+
+    fn set_activations(&mut self, activations: &[f32]) {
+        <Self as DerefMut>::deref_mut(self).set_activations(activations)
     }
 }

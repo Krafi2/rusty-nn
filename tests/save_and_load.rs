@@ -18,7 +18,7 @@ fn save_and_load() -> anyhow::Result<()> {
         FeedForward::<BasicLayer>::from_file("temporary_file_to_test_whether_saving_works")?;
     std::fs::remove_file("temporary_file_to_test_whether_saving_works")?;
 
-    let mut trainer = common::trainer_from_nn(network);
+    let mut trainer = common::trainer_from_nn(network, common::basic_config(), common::t_data());
 
     trainer.do_epoch()?; //test training still works
     trainer.do_batch()?;

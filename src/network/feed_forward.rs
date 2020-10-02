@@ -58,12 +58,12 @@ impl<T: Layer + Clone + Serialize> FeedForwardMarker_ for FeedForward<T> {
 /// that the layers it contains don't need to implement Serialize and Deserialize.
 /// This means that it can't be saved but can use layers which cannot be serialized.
 #[derive(Clone)]
-pub struct FeedForwardNoSer<T: Layer + Clone> {
+pub struct FeedForwardNoSer<T: Layer> {
     weights: Vec<f32s>,
     layers: Vec<T>,
     grads: Option<Grads>,
 }
-impl<T: Layer + Clone> FeedForwardMarker_ for FeedForwardNoSer<T> {
+impl<T: Layer> FeedForwardMarker_ for FeedForwardNoSer<T> {
     type Layer = T;
     fn try_save(&self, _path: &std::path::Path) -> anyhow::Result<bool> {
         Ok(false) // We cannot save
@@ -229,7 +229,7 @@ impl<T: Layer + Clone> LinearConstruction<T> for FeedForward<T> {
     }
 }
 
-impl<T: Layer + Clone> LinearConstruction<T> for FeedForwardNoSer<T> {
+impl<T: Layer> LinearConstruction<T> for FeedForwardNoSer<T> {
     fn construct(weights: Vec<f32s>, layers: Vec<T>) -> Self {
         Self {
             weights,
@@ -239,7 +239,7 @@ impl<T: Layer + Clone> LinearConstruction<T> for FeedForwardNoSer<T> {
     }
 }
 
-impl<T: Layer + Clone + Serialize> Into<NetworkUnvalidated<T>> for FeedForward<T> {
+impl<T: Layer + Clone> Into<NetworkUnvalidated<T>> for FeedForward<T> {
     fn into(self) -> NetworkUnvalidated<T> {
         NetworkUnvalidated {
             weights: self.weights,
@@ -276,7 +276,7 @@ impl Grads {
 
 /// When deserializing, we first construct this object, validate that it's structure is correct and convert to Network
 #[derive(Serialize, Deserialize)]
-struct NetworkUnvalidated<T: Layer + Clone> {
+struct NetworkUnvalidated<T: Layer> {
     #[serde(
         serialize_with = "serialize_simd",
         deserialize_with = "deserialize_simd"

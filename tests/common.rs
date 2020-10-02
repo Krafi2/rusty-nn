@@ -14,32 +14,37 @@ pub fn t_data() -> Vec<[f32; 2]> {
         .collect()
 }
 
+pub fn basic_config() -> TrainingConfig {
+    TrainingConfig {
+        batch_size: 10,
+        epoch_count: 100,
+        learning_rate: 0.1,
+        weight_decay: 0.,
+    }
+}
+
 pub fn basic_trainer(
 ) -> DefaultTrainer<OptimizerBase<SquaredError, GradientDescent, FeedForward<BasicLayer>>, [f32; 2]>
 {
     let network = LinearBuilder::new()
         .add(InputBuilder::new(1))
-        .add(DenseBuilder::<Sigmoid, _>::new(XavierInit::new(), 1))
+        .add(DenseBuilder::<Sigmoid, _>::new(XavierInit::new(), 1, true, true))
         .build()
         .unwrap();
 
-    trainer_from_nn(network)
+    trainer_from_nn(network, basic_config(), t_data())
 }
 
 pub fn trainer_from_nn<T: Network>(
     nn: T,
+    config: TrainingConfig,
+    data: Vec<[f32; 2]>,
 ) -> DefaultTrainer<OptimizerBase<SquaredError, GradientDescent, T>, [f32; 2]> {
-    let config = TrainingConfig {
-        batch_size: 10,
-        epoch_count: 100,
-        learning_rate: 0.1,
-        weight_decay: 0.,
-    };
 
     let optimizer = OptimizerBase::new(nn, GradientDescent);
     DefaultBuilder::new()
         .optimizer(optimizer)
         .config(config)
-        .training_data(t_data())
+        .training_data(data)
         .build()
 }
