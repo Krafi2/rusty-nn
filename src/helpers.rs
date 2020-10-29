@@ -110,8 +110,9 @@ pub fn mask(n: usize) -> mask_s {
 }
 
 pub fn sum(arr: &[f32s], len: usize) -> f32 {
-    assert!(!arr.is_empty());
-    let mask = mask(len % f32s::lanes());
+    assert!(arr.len() * f32s::lanes() >= len);
+    // the additional math is so that we get the lane size instead of zero when the len is divisible
+    let mask = mask((len - 1) % f32s::lanes() + 1);
     let mut iter = arr.iter().rev();
     let mut val = mask.select(*iter.next().unwrap(), f32s::splat(0.));
 
