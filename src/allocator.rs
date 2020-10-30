@@ -135,7 +135,7 @@ impl<'a> Allocator<'a> {
         self.0.reserve(n);
 
         unsafe {
-            let ptr: *mut f32 = std::mem::transmute(self.0.as_mut_ptr());
+            let ptr = self.0.as_mut_ptr().add(self.0.len()) as *mut f32;
             for i in 0..n * f32s::lanes() {
                 let val = init();
                 ptr.add(i).write(val)
