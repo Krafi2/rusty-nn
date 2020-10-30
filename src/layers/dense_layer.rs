@@ -8,8 +8,8 @@ use crate::initializer::Initializer;
 use serde::{Deserialize, Serialize};
 use small_table::Table;
 
-#[derive(Serialize, Deserialize, Clone)]
-///Your run of the mill fully connected (or dense) layer
+#[derive(Serialize, Deserialize)]
+///Your run of the mill fully connected (dense) layer
 pub struct DenseLayer<T: ActivFunc> {
     in_size: usize,
     actual_in: usize, //input size rounded up to the nearest simd type
@@ -246,6 +246,29 @@ impl<T: ActivFunc> DenseLayer<T> {
         };
         layer.rebuild();
         layer
+    }
+}
+
+impl<T: ActivFunc> Clone for DenseLayer<T> {
+    fn clone(&self) -> Self {
+        unsafe {
+            Self {
+                in_size: self.in_size.clone(),
+                actual_in: self.actual_in.clone(),
+                size: self.size.clone(),
+                actual_size: self.actual_size.clone(),
+                weights: self.weights.clone(),
+                biases: self.biases.clone(),
+                w_gradients: self.w_gradients.clone(),
+                b_gradients: self.b_gradients.clone(),
+                update_weights: self.update_weights.clone(),
+                update_biases: self.update_biases.clone(),
+                weighted_inputs: self.weighted_inputs.clone(),
+                activations: self.activations.clone(),
+                temp: self.temp.clone(),
+                marker_: self.marker_.clone(),
+            }
+        }
     }
 }
 

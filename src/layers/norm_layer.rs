@@ -12,7 +12,7 @@ use small_table::Table;
 
 /// Layer type where every neuron operates only on a single output of the layer below.
 /// Useful when you want to normalize some values
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize)]
 pub struct NormLayer<T: ActivFunc> {
     size: usize,
     actual_size: usize,
@@ -29,6 +29,7 @@ pub struct NormLayer<T: ActivFunc> {
     activations: Vec<f32s>,
     marker_: std::marker::PhantomData<*const T>,
 }
+
 impl<T: ActivFunc> Layer for NormLayer<T> {
     fn rebuild(&mut self) {
         self.weighted_inputs = splat_n(self.actual_size, 0.);
@@ -133,6 +134,7 @@ impl<T: ActivFunc> Layer for NormLayer<T> {
 
     fn unready(&mut self) {}
 }
+
 impl<T: ActivFunc> NormLayer<T> {
     pub fn new<I: Initializer>(mut init: I, mut alloc: Allocator, size: usize) -> Self {
         let actual_size = least_size(size, f32s::lanes());
@@ -162,6 +164,24 @@ impl<T: ActivFunc> NormLayer<T> {
         };
         layer.rebuild();
         layer
+    }
+}
+
+impl<T: ActivFunc> Clone for NormLayer<T> {
+    fn clone(&self) -> Self {
+        unsafe {
+            Self {
+                size: self.size.clone(),
+                actual_size: self.actual_size.clone(),
+                weights: self.weights.clone(),
+                biases: self.biases.clone(),
+                w_gradients: self.w_gradients.clone(),
+                b_gradients: self.b_gradients.clone(),
+                weighted_inputs: self.weighted_inputs.clone(),
+                activations: self.activations.clone(),
+                marker_: self.marker_.clone(),
+            }
+        }
     }
 }
 
