@@ -1,4 +1,4 @@
-use super::{BasicLayer, FromArch, Layer, LayerArch, LayerBuilder, OutShape};
+use super::{BasicLayer, FromArch, GradError, Layer, LayerArch, LayerBuilder, OutShape};
 use crate::activation_functions::ActivFunc;
 use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;
@@ -84,7 +84,7 @@ impl<T: ActivFunc> Layer for DenseLayer<T> {
         inputs: &[f32s],
         in_deriv: &[f32s],
         out_deriv: &mut [f32s],
-    ) -> Result<(), ()> {
+    ) -> Result<(), GradError> {
         let mut b_grad = self_deriv.get_mut(&mut self.b_gradients);
         let mut w_grad = self_deriv.get_mut(&mut self.w_gradients);
         let weights = weights.get(&self.weights);

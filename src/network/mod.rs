@@ -6,6 +6,7 @@ pub use self::feed_forward::FeedForward;
 
 use crate::f32s;
 use crate::helpers::as_scalar_mut;
+use crate::layers::GradError;
 
 use std::path::Path;
 
@@ -47,11 +48,11 @@ pub trait Network {
     fn unready(&mut self);
     /// Calculates the weight gradients based on the gradients of the output.
     /// Returns Err if the network isn't readied.
-    fn calc_gradients(&mut self, output_gradients: &[f32]) -> Result<(), ()>;
+    fn calc_gradients(&mut self, output_gradients: &[f32]) -> Result<(), GradError>;
     // Returns the gradients acumulated by the network so far or Err if the network isn't readied.
     fn gradients(&mut self) -> Result<&mut [f32s], ()>;
     /// Resets the gradients to zero or returns Err if the network isn't readied.
-    fn reset_gradients(&mut self) -> Result<(), ()>;
+    fn reset_gradients(&mut self) -> Result<(), GradError>;
     /// Accesor for weights and gradients at the same time so borrow checker doesn't yell at us.
     /// Returns None if the network isn't readied
     fn weight_grads_mut(&mut self) -> Option<(&mut [f32s], &mut [f32s])>;

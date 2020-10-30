@@ -1,4 +1,4 @@
-use super::{BasicLayer, Layer, LayerArch, LayerBuilder, OutShape};
+use super::{BasicLayer, GradError, Layer, LayerArch, LayerBuilder, OutShape};
 use crate::activation_functions::Identity;
 use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;
@@ -31,7 +31,7 @@ impl Layer for InputLayer {
         _inputs: &[f32s],
         _in_deriv: &[f32s],
         _out_deriv: &mut [f32s],
-    ) -> Result<(), ()> {
+    ) -> Result<(), GradError> {
         panic!("Input layers cannot calculate derivatives")
     }
 

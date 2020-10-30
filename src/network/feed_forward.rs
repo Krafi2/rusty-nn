@@ -13,7 +13,7 @@ use super::{construction::LinearConstruction, Network};
 use crate::allocator::Mediator;
 use crate::f32s;
 use crate::helpers::{as_scalar, as_scalar_mut, zero_simd};
-use crate::layers::Layer;
+use crate::layers::{GradError, Layer};
 
 mod private_ {
     use super::*;
@@ -149,7 +149,7 @@ impl<T: FeedForwardMarker_> Network for T {
         }
     }
 
-    fn calc_gradients(&mut self, output_gradients: &[f32]) -> Result<(), ()> {
+    fn calc_gradients(&mut self, output_gradients: &[f32]) -> Result<(), GradError> {
         let (layers, weights, grads) = self.decompose_mut();
         if let Some(grads) = grads {
             let size = layers.last().unwrap().out_size();
@@ -188,7 +188,7 @@ impl<T: FeedForwardMarker_> Network for T {
             }
             Ok(())
         } else {
-            Err(())
+            Err(GradError::new())
         }
     }
 
@@ -200,12 +200,12 @@ impl<T: FeedForwardMarker_> Network for T {
             .ok_or(())
     }
 
-    fn reset_gradients(&mut self) -> Result<(), ()> {
+    fn reset_gradients(&mut self) -> Result<(), GradError> {
         self.decompose_mut()
             .2
             .as_mut()
             .map(|g| zero_simd(&mut g.gradients))
-            .ok_or(())
+            .ok_or_else(GradError::new)
     }
 
     fn weight_grads_mut(&mut self) -> Option<(&mut [f32s], &mut [f32s])> {

@@ -17,6 +17,8 @@ use crate::f32s;
 use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Serialize};
 
+use std::error::Error;
+use std::fmt::Display;
 use std::ops::{Deref, DerefMut};
 
 //TODO maybe remove the Clone bound
@@ -45,7 +47,7 @@ pub trait Layer {
         inputs: &[f32s],
         in_deriv: &[f32s],
         out_deriv: &mut [f32s],
-    ) -> Result<(), ()>;
+    ) -> Result<(), GradError>;
 
     /// Return string containing formated debug information
     fn debug(&self, med: Mediator<&[f32s], WeightHndl>) -> String;
@@ -79,6 +81,26 @@ pub trait LayerBuilder {
     fn connect(self, previous: Option<&dyn Layer>, alloc: Allocator) -> Self::Output;
 }
 
+/// Error encountered when calculating the weight gradients.
+/// Currently this error simply means that the queried structure wasn't
+/// properly initialized.
+#[derive(Clone, Debug)]
+pub struct GradError;
+
+impl GradError {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Error for GradError {}
+
+impl Display for GradError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Wasn't ready to calculate gradients")
+    }
+}
+
 #[derive(Clone)]
 pub struct OutShape {
     pub dims: Vec<usize>,
@@ -86,6 +108,8 @@ pub struct OutShape {
 
 #[enum_dispatch(Layer)]
 #[derive(Serialize, Deserialize, Clone)]
+/// This enum represents the architecture of a layer. It is primarily used
+/// in the BasicLayer enum to fully describe a layer.
 pub enum LayerArch<T: ActivFunc> {
     DenseLayer(DenseLayer<T>),
     InputLayer(InputLayer),
@@ -94,6 +118,8 @@ pub enum LayerArch<T: ActivFunc> {
 
 #[enum_dispatch(Layer)]
 #[derive(Serialize, Deserialize, Clone)]
+/// This enum describes the architecture and activation function of a layer
+/// so it can be easily serialized and deserialized.
 pub enum BasicLayer {
     Sigmoid(LayerArch<Sigmoid>),
     Identity(LayerArch<Identity>),
@@ -149,7 +175,7 @@ impl<T: Layer + ?Sized> Layer for Box<T> {
         inputs: &[f32s],
         in_deriv: &[f32s],
         out_deriv: &mut [f32s],
-    ) -> Result<(), ()> {
+    ) -> Result<(), GradError> {
         <Self as DerefMut>::deref_mut(self)
             .calculate_derivatives(weights, self_deriv, inputs, in_deriv, out_deriv)
     }
