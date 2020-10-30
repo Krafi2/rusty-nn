@@ -65,7 +65,10 @@ pub trait Layer {
 
     /// This function should panic for all non-input layer types
     fn set_activations(&mut self, _activations: &[f32]) {
-        unimplemented!("set_activations not implemented for {}", std::any::type_name::<Self>())
+        unimplemented!(
+            "set_activations not implemented for {}",
+            std::any::type_name::<Self>()
+        )
     }
 }
 
@@ -102,27 +105,27 @@ pub enum BasicLayer {
 // The conversion is implemented like this instead of a trait, because the from trait is incompatible
 // with some trait definitions made by the enum_dispatch macro and this seems like the path of least resistance
 // as I don't think anyone will ever need to pass LayerArch as a generic argument needing the trait
-impl BasicLayer {
-    /// Convert from a generic LayerArch<T> into a LayerType
-    fn from<T: ActivFunc>(l_arch: LayerArch<T>) -> Self {
-        // Sound as long as each implementation of ActivFunc has the correct Kind
-        // Could be potentially made safe by implementing TryInto for LayerArch<T>
-        // but that would likely require some macro magic to be sustainable and it shouldn't
-        // be hard to uphold the soundness requirements
-        unsafe {
-            match T::KIND {
-                AFunc::Sigmoid => Self::Sigmoid(std::mem::transmute(l_arch)),
-                AFunc::Identity => Self::Identity(std::mem::transmute(l_arch)),
-                AFunc::TanH => Self::TanH(std::mem::transmute(l_arch)),
-                AFunc::SiLU => Self::SiLU(std::mem::transmute(l_arch)),
-                AFunc::ReLU => Self::ReLU(std::mem::transmute(l_arch)),
-                AFunc::Unknown => panic!("Encountered unknown layer type while converting into BasicLayer"),
-            }
-        }
-    }
+pub trait FromArch<T: ActivFunc> {
+    fn from(arch: LayerArch<T>) -> BasicLayer;
 }
 
-impl <T: Layer + ?Sized> Layer for Box<T> {
+macro_rules! impl_from_arch {
+    ($t:tt) => {
+        impl FromArch<$t> for BasicLayer {
+            fn from(arch: LayerArch<$t>) -> Self {
+                Self::$t(arch)
+            }
+        }
+    };
+}
+
+impl_from_arch!(Sigmoid);
+impl_from_arch!(Identity);
+impl_from_arch!(TanH);
+impl_from_arch!(SiLU);
+impl_from_arch!(ReLU);
+
+impl<T: Layer + ?Sized> Layer for Box<T> {
     fn rebuild(&mut self) {
         <Self as DerefMut>::deref_mut(self).rebuild()
     }
@@ -147,7 +150,8 @@ impl <T: Layer + ?Sized> Layer for Box<T> {
         in_deriv: &[f32s],
         out_deriv: &mut [f32s],
     ) -> Result<(), ()> {
-        <Self as DerefMut>::deref_mut(self).calculate_derivatives(weights, self_deriv, inputs, in_deriv, out_deriv)
+        <Self as DerefMut>::deref_mut(self)
+            .calculate_derivatives(weights, self_deriv, inputs, in_deriv, out_deriv)
     }
 
     fn debug(&self, med: Mediator<&[f32s], WeightHndl>) -> String {
@@ -180,5 +184,43 @@ impl <T: Layer + ?Sized> Layer for Box<T> {
 
     fn set_activations(&mut self, activations: &[f32]) {
         <Self as DerefMut>::deref_mut(self).set_activations(activations)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Compares two arrays with the given error tolerance. Returns None if either of the arrays contains NaN.
+    pub(crate) fn is_equal_ish(left: &[f32], right: &[f32], tolerance: f32) -> Option<bool> {
+        assert_eq!(left.len(), right.len());
+        let err = left
+            .iter()
+            .zip(right)
+            .map(|(l, r)| f32::abs(l - r))
+            .try_fold(0., |a, b| {
+                if let Some(ord) = a.partial_cmp(&b) {
+                    Some(match ord {
+                        std::cmp::Ordering::Less => b,
+                        std::cmp::Ordering::Equal => a,
+                        std::cmp::Ordering::Greater => a,
+                    })
+                } else {
+                    None
+                }
+            });
+        err.map(|e| e < tolerance)
+    }
+
+    pub(crate) fn check(expected: &[f32], output: &[f32], tolerance: f32, id: &str) {
+        let diag = || format!("expected: {:?}\nreceived: {:?}", expected, output);
+
+        if let Some(eq) = is_equal_ish(expected, output, tolerance) {
+            if eq {
+                return;
+            } else {
+                panic!("Evaluation produced incorrect {}.\n{}", id, diag())
+            }
+        } else {
+            panic!("Evaluation produced a NaN\n{}", diag())
+        }
     }
 }

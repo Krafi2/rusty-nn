@@ -65,3 +65,28 @@ impl Initializer for IdentityInit {
     }
 }
 impl_ref!(IdentityInit);
+
+/// This initializer accepts an iterator over f32 values and uses them to initialize the weights.
+/// Panics if a weights is requested but the iterator returns None.
+pub struct WeightInit<T: Iterator<Item = f32>> {
+    iter: T,
+}
+impl<I: Iterator<Item = f32>> WeightInit<I> {
+    pub fn new<T: IntoIterator<Item = f32, IntoIter = I>>(weights: T) -> Self {
+        Self {
+            iter: weights.into_iter(),
+        }
+    }
+}
+
+impl<I: Iterator<Item = f32>> Initializer for WeightInit<I> {
+    fn get(&mut self, _in_size: usize, _size: usize) -> f32 {
+        self.iter.next().expect("Ran out of weights")
+    }
+}
+
+impl<I: Iterator<Item = f32>> Initializer for &mut WeightInit<I> {
+    fn get(&mut self, in_size: usize, size: usize) -> f32 {
+        (*self).get(in_size, size)
+    }
+}

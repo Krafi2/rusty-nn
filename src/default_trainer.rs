@@ -4,7 +4,6 @@ use rand::SeedableRng;
 
 use crate::optimizer::OptimizerManager;
 use crate::trainer::{BuilderBase, Trainer, TrainerBase, TrainerBuilder};
-use crate::network::Network;
 
 pub struct DefaultTrainer<O: OptimizerManager, U: AsRef<[f32]>> {
     tb: TrainerBase<O>,

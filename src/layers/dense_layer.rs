@@ -1,4 +1,4 @@
-use super::{Layer, LayerArch, LayerBuilder, BasicLayer, OutShape};
+use super::{BasicLayer, FromArch, Layer, LayerArch, LayerBuilder, OutShape};
 use crate::activation_functions::ActivFunc;
 use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;
@@ -25,7 +25,7 @@ pub struct DenseLayer<T: ActivFunc> {
 
     update_weights: bool,
     update_biases: bool,
-    
+
     #[serde(skip, default = "empty_vec_simd")]
     weighted_inputs: Vec<f32s>, //size of actual_size
     #[serde(skip, default = "empty_vec_simd")]
@@ -128,10 +128,9 @@ impl<T: ActivFunc> Layer for DenseLayer<T> {
                 let af_deriv = f32s::splat(*temp);
                 for (wd, inp) in wds.iter_mut().zip(inputs) {
                     *wd += *inp * af_deriv;
+                }
             }
         }
-        }
-        
 
         //compute output derivatives
         for (weights, temp) in weights
@@ -212,7 +211,21 @@ impl<T: ActivFunc> DenseLayer<T> {
         // weight count
         let wc = actual_in * size;
 
-        let w_handles = alloc.allocate_with(wc, || init.get(in_size, size));
+        // make sure that any extra weights get initialized with zeroes
+        let mut n = 0;
+        let w_handles = alloc.allocate_with(wc, || {
+            let w = if n < in_size {
+                init.get(in_size, size)
+            } else {
+                0.
+            };
+            n += 1;
+            if n == actual_in * f32s::lanes() {
+                n = 0;
+            }
+            w
+        });
+
         let b_handles = alloc.allocate(actual_size);
 
         let mut layer = DenseLayer {
@@ -262,13 +275,109 @@ impl<T: ActivFunc, I: Initializer> LayerBuilder for DenseBuilder<T, I> {
     fn connect(self, previous: Option<&dyn Layer>, alloc: Allocator) -> Self::Output {
         let previous = previous
             .expect("A DenseLayer cannot be the input layer of a network, use a specialized layer");
-        let in_size = previous.out_shape().dims.iter().product();
-        DenseLayer::new(self.init, alloc, in_size, self.size, self.update_w, self.update_b)
+        let in_size = previous.out_size();
+        DenseLayer::new(
+            self.init,
+            alloc,
+            in_size,
+            self.size,
+            self.update_w,
+            self.update_b,
+        )
     }
 }
 
-impl<T: ActivFunc> Into<BasicLayer> for DenseLayer<T> {
+impl<T: ActivFunc> Into<BasicLayer> for DenseLayer<T>
+where
+    BasicLayer: FromArch<T>,
+{
     fn into(self) -> BasicLayer {
-        BasicLayer::from(LayerArch::DenseLayer(self))
+        <BasicLayer as FromArch<T>>::from(LayerArch::DenseLayer(self))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::activation_functions::Test;
+    use crate::helpers::as_scalar;
+    use crate::initializer::WeightInit;
+    use crate::layers::tests::*;
+
+    fn create_layer() -> (DenseLayer<Test>, Vec<f32s>) {
+        let mut weights = Vec::new();
+        let alloc = Allocator::new(&mut weights);
+        let init = WeightInit::new((1..=12).map(|x| x as f32));
+        let layer = DenseLayer::<Test>::new(init, alloc, 4, 3, true, true);
+
+        (layer, weights)
+    }
+
+    const INPUTS: [f32s; 1] = [f32s::new(1., 2., 3., 4.)];
+    const TOLERANCE: f32 = 0.0001;
+
+    #[test]
+    fn dense_eval() {
+        let (mut layer, weights) = create_layer();
+
+        layer.eval(&INPUTS, Mediator::new(&weights));
+        let output = &as_scalar(&layer.output())[0..3];
+        let expected = &[60., 140., 220.];
+
+        check(expected, output, TOLERANCE, "output");
+    }
+
+    /// Computes the various derivatives to be tested.
+    /// [weight_deriv, bias_deriv, out_deriv]
+    fn derivs() -> [Vec<f32>; 3] {
+        let (mut layer, weights) = create_layer();
+
+        let input = [f32s::new(1., 2., 3., 4.)];
+        layer.eval(&input, Mediator::new(&weights));
+
+        let mut deriv = vec![f32s::splat(0.); weights.len()];
+        let mut out_deriv = vec![f32s::splat(0.); layer.actual_in];
+
+        layer.ready();
+        layer
+            .calculate_derivatives(
+                Mediator::new(&weights),
+                Mediator::new(deriv.as_mut()),
+                &INPUTS,
+                &[f32s::new(0.1, 0.2, 0.3, 0.4)],
+                &mut out_deriv,
+            )
+            .unwrap();
+
+        let mediator = Mediator::<&mut [_], _>::new(deriv.as_mut());
+        let weight_deriv = as_scalar(&mediator.get(&layer.w_gradients));
+        let bias_deriv = &as_scalar(&mediator.get(&layer.b_gradients))[0..3];
+        let out_deriv = as_scalar(&out_deriv);
+        [
+            weight_deriv.to_owned(),
+            bias_deriv.to_owned(),
+            out_deriv.to_owned(),
+        ]
+    }
+
+    #[test]
+    fn dense_backprop_weights() {
+        let output = &derivs()[0];
+        let expected = [0.2, 0.4, 0.6, 0.8, 0.4, 0.8, 1.2, 1.6, 0.6, 1.2, 1.8, 2.4];
+        check(&expected, output, TOLERANCE, "weight derivatives");
+    }
+
+    #[test]
+    fn dense_backprop_bias() {
+        let output = &derivs()[1];
+        let expected = [0.2, 0.4, 0.6];
+        check(&expected, output, TOLERANCE, "bias derivatives");
+    }
+
+    #[test]
+    fn dense_backprop_output() {
+        let output = &derivs()[2];
+        let expected = [7.6, 8.8, 10., 11.2];
+        check(&expected, output, TOLERANCE, "output derivatives");
     }
 }

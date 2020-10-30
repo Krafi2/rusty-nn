@@ -17,8 +17,7 @@ pub enum AFunc {
     Unknown,
 }
 
-pub trait ActivFunc: Clone {
-    const KIND: AFunc;
+pub trait ActivFunc {
     fn evaluate(x: f32) -> f32;
     fn derivative(inp: f32, out: f32) -> f32;
 }
@@ -26,7 +25,6 @@ pub trait ActivFunc: Clone {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Sigmoid;
 impl ActivFunc for Sigmoid {
-    const KIND: AFunc = AFunc::Sigmoid;
     fn evaluate(x: f32) -> f32 {
         1. / (1. + (-x).exp())
     }
@@ -38,7 +36,6 @@ impl ActivFunc for Sigmoid {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Identity;
 impl ActivFunc for Identity {
-    const KIND: AFunc = AFunc::Identity;
     fn evaluate(x: f32) -> f32 {
         x
     }
@@ -50,7 +47,6 @@ impl ActivFunc for Identity {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TanH;
 impl ActivFunc for TanH {
-    const KIND: AFunc = AFunc::TanH;
     fn evaluate(x: f32) -> f32 {
         x.tanh()
     }
@@ -62,7 +58,6 @@ impl ActivFunc for TanH {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SiLU;
 impl ActivFunc for SiLU {
-    const KIND: AFunc = AFunc::SiLU;
     fn evaluate(x: f32) -> f32 {
         x / (1. + (-x).exp()) // x * sigmoid(x)
     }
@@ -75,7 +70,6 @@ impl ActivFunc for SiLU {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ReLU;
 impl ActivFunc for ReLU {
-    const KIND: AFunc = AFunc::ReLU;
     fn evaluate(x: f32) -> f32 {
         f32::max(x, 0.)
     }
@@ -85,6 +79,19 @@ impl ActivFunc for ReLU {
         } else {
             0.
         }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+/// This activation function is used for testing as it transforms its output in a straightforward way
+/// which makes it easy to check the validity of the outputs
+pub struct Test;
+impl ActivFunc for Test {
+    fn evaluate(x: f32) -> f32 {
+        2. * x
+    }
+    fn derivative(_inp: f32, _out: f32) -> f32 {
+        2.
     }
 }
 

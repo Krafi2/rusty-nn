@@ -1,4 +1,4 @@
-use super::{Layer, LayerArch, LayerBuilder, BasicLayer, OutShape};
+use super::{BasicLayer, Layer, LayerArch, LayerBuilder, OutShape};
 use crate::activation_functions::Identity;
 use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;

@@ -1,7 +1,7 @@
 use crate::{f32s, mask_s, usize_s};
 use rand::{rngs::SmallRng, seq::SliceRandom, SeedableRng};
 
-use std::mem::{transmute, MaybeUninit};
+use std::mem::MaybeUninit;
 
 ///Shuffles an array of consequtive integers and allows yout to iterate through them
 pub struct IndexShuffler {
@@ -100,10 +100,9 @@ pub fn mask(n: usize) -> mask_s {
     assert!(n <= mask_s::lanes());
     let mut m = MaybeUninit::zeroed();
     unsafe {
-        let arr =
-            std::slice::from_raw_parts_mut(transmute::<_, &mut usize_s>(&mut m), mask_s::lanes());
-        for i in arr.iter_mut().take(n) {
-            *i = usize_s::MAX;
+        let ptr = m.as_mut_ptr() as *mut usize_s;
+        for i in 0..n {
+            ptr.add(i).write(usize_s::MAX)
         }
         m.assume_init()
     }

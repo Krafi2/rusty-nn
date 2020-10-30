@@ -205,7 +205,7 @@ impl<O: OptimizerManager> TrainerBase<O> {
 
     pub fn change_data_len(&mut self, new_len: usize) {
         self.batch_count = new_len / self.batch_size();
-    } 
+    }
 }
 impl<O: OptimizerManager> Serialize for TrainerBase<O> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

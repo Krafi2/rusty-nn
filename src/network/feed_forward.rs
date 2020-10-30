@@ -193,11 +193,19 @@ impl<T: FeedForwardMarker_> Network for T {
     }
 
     fn gradients(&mut self) -> Result<&mut [f32s], ()> {
-        self.decompose_mut().2.as_mut().map(|g| g.gradients.as_mut_slice()).ok_or(())
+        self.decompose_mut()
+            .2
+            .as_mut()
+            .map(|g| g.gradients.as_mut_slice())
+            .ok_or(())
     }
 
     fn reset_gradients(&mut self) -> Result<(), ()> {
-        self.decompose_mut().2.as_mut().map(|g| zero_simd(&mut g.gradients)).ok_or(())
+        self.decompose_mut()
+            .2
+            .as_mut()
+            .map(|g| zero_simd(&mut g.gradients))
+            .ok_or(())
     }
 
     fn weight_grads_mut(&mut self) -> Option<(&mut [f32s], &mut [f32s])> {
@@ -376,27 +384,28 @@ impl<'de> Visitor<'de> for SimdVisitor {
     where
         A: SeqAccess<'de>,
     {
-        let vec = 
-        if let Some(len) = seq.size_hint() {
+        let vec = if let Some(len) = seq.size_hint() {
             if len % f32s::lanes() != 0 {
                 return Err(<A::Error as de::Error>::custom(format!(
                     "Number of elements must be a multiple of {}, received: {}",
                     f32s::lanes(),
                     len,
-                )))
+                )));
             }
             Vec::with_capacity(len / f32s::lanes())
-        }
-        else {
+        } else {
             Vec::new()
         };
 
         let len = vec.len();
         let cap = vec.capacity();
         // we create the float vector this way to ensure alignment
-        let mut vec =
-        unsafe {
-            Vec::from_raw_parts(vec.leak().as_mut_ptr() as *mut f32, len * f32s::lanes(), cap * f32s::lanes())
+        let mut vec = unsafe {
+            Vec::from_raw_parts(
+                vec.leak().as_mut_ptr() as *mut f32,
+                len * f32s::lanes(),
+                cap * f32s::lanes(),
+            )
         };
 
         while let Some(e) = seq.next_element()? {
@@ -408,15 +417,19 @@ impl<'de> Visitor<'de> for SimdVisitor {
                 "Number of elements must be a multiple of {}, received: {}",
                 f32s::lanes(),
                 vec.len(),
-            )))
+            )));
         }
 
         vec.shrink_to_fit();
-        
+
         let len = vec.len();
         let cap = vec.capacity();
         unsafe {
-            Ok(Vec::from_raw_parts(vec.leak().as_mut_ptr() as *mut f32s, len / f32s::lanes(), cap / f32s::lanes()))
+            Ok(Vec::from_raw_parts(
+                vec.leak().as_mut_ptr() as *mut f32s,
+                len / f32s::lanes(),
+                cap / f32s::lanes(),
+            ))
         }
     }
 }

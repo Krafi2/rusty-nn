@@ -35,10 +35,10 @@ pub struct OptimizerBase<F: LossFunc, O: Optimizer, N: Network> {
 }
 
 impl<O: Optimizer, N: Network, F: LossFunc> OptimizerBase<F, O, N> {
-    pub fn new(mut network: N, optimizer: O) -> Self {
+    pub fn new<B: OptimizerBuilder<Output = O>>(mut network: N, optimizer: B) -> Self {
         network.ready();
         Self {
-            optimizer,
+            optimizer: optimizer.build(network.weights().len()),
             network,
             marker_: std::marker::PhantomData,
         }
@@ -56,7 +56,11 @@ impl<O: Optimizer, N: Network, F: LossFunc> OptimizerManager for OptimizerBase<F
 
         let target = &data[input_size..];
         let mut grads = vec![0f32; self.network.out_size()];
-        F::gradients(&as_scalar(self.network.output())[..self.network.out_size()], target, &mut grads);
+        F::gradients(
+            &as_scalar(self.network.output())[..self.network.out_size()],
+            target,
+            &mut grads,
+        );
 
         self.network.calc_gradients(&grads).unwrap();
 
@@ -109,6 +113,11 @@ impl<O: Optimizer, N: Network, F: LossFunc> OptimizerManager for OptimizerBase<F
     }
 }
 
+pub trait OptimizerBuilder {
+    type Output: Optimizer;
+    fn build(self, len: usize) -> Self::Output;
+}
+
 pub trait Optimizer {
     fn update_weights(
         &mut self,
@@ -135,6 +144,21 @@ impl Optimizer for GradientDescent {
         for (w, d) in weights.iter_mut().zip(gradients) {
             *w = w.mul_add(decay, k * *d);
         }
+    }
+}
+
+impl GradientDescent {
+    pub fn builder() -> GradDescBuilder {
+        GradDescBuilder
+    }
+}
+
+pub struct GradDescBuilder;
+impl OptimizerBuilder for GradDescBuilder {
+    type Output = GradientDescent;
+
+    fn build(self, _len: usize) -> Self::Output {
+        GradientDescent
     }
 }
 
@@ -187,5 +211,37 @@ impl Optimizer for Adam {
 
         self.beta1_pow *= self.beta1;
         self.beta2_pow *= self.beta2;
+    }
+}
+
+impl Adam {
+    pub fn builder(beta1: f32, beta2: f32, epsilon: f32) -> AdamBuilder {
+        AdamBuilder {
+            beta1,
+            beta2,
+            epsilon,
+        }
+    }
+}
+
+pub struct AdamBuilder {
+    beta1: f32,
+    beta2: f32,
+    epsilon: f32,
+}
+
+impl OptimizerBuilder for AdamBuilder {
+    type Output = Adam;
+
+    fn build(self, len: usize) -> Self::Output {
+        Adam {
+            momentum: vec![f32s::splat(0.); len],
+            velocity: vec![f32s::splat(0.); len],
+            beta1: self.beta1,
+            beta2: self.beta2,
+            epsilon: self.epsilon,
+            beta1_pow: self.beta1,
+            beta2_pow: self.beta2,
+        }
     }
 }

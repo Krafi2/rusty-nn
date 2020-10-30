@@ -1,4 +1,4 @@
-use super::{Layer, LayerArch, LayerBuilder, BasicLayer, OutShape};
+use super::{BasicLayer, FromArch, Layer, LayerArch, LayerBuilder, OutShape};
 use crate::activation_functions::ActivFunc;
 use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;
@@ -137,7 +137,13 @@ impl<T: ActivFunc> NormLayer<T> {
     pub fn new<I: Initializer>(mut init: I, mut alloc: Allocator, size: usize) -> Self {
         let actual_size = least_size(size, f32s::lanes());
 
-        let w_handles = alloc.allocate_with(actual_size, || init.get(size, size));
+        // make sure that any extra weights get initialized with zeroes
+        let mut n = 0;
+        let w_handles = alloc.allocate_with(actual_size, || {
+            let w = if n < size { init.get(size, size) } else { 0. };
+            n += 1;
+            w
+        });
         let b_handles = alloc.allocate(actual_size);
 
         let mut layer = NormLayer {
@@ -159,9 +165,12 @@ impl<T: ActivFunc> NormLayer<T> {
     }
 }
 
-impl<T: ActivFunc> Into<BasicLayer> for NormLayer<T> {
+impl<T: ActivFunc> Into<BasicLayer> for NormLayer<T>
+where
+    BasicLayer: FromArch<T>,
+{
     fn into(self) -> BasicLayer {
-        BasicLayer::from(LayerArch::NormLayer(self))
+        <BasicLayer as FromArch<T>>::from(LayerArch::NormLayer(self))
     }
 }
 
@@ -182,10 +191,95 @@ impl<T: ActivFunc, I: Initializer> NormBuilder<T, I> {
 impl<T: ActivFunc, I: Initializer> LayerBuilder for NormBuilder<T, I> {
     type Output = NormLayer<T>;
     fn connect(self, previous: Option<&dyn Layer>, alloc: Allocator) -> Self::Output {
-        let shape = previous
-            .expect("A NormLayer cannot be the input layer of a network, use a specialized layer")
-            .out_shape();
-        let in_size = shape.dims.iter().product();
+        let previous = previous
+            .expect("A NormLayer cannot be the input layer of a network, use a specialized layer");
+        let in_size = previous.out_size();
         NormLayer::new(self.init, alloc, in_size)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::activation_functions::Test;
+    use crate::helpers::as_scalar;
+    use crate::initializer::WeightInit;
+    use crate::layers::tests::*;
+
+    fn create_layer() -> (NormLayer<Test>, Vec<f32s>) {
+        let mut weights = Vec::new();
+        let alloc = Allocator::new(&mut weights);
+        let init = WeightInit::new((1..=3).map(|x| x as f32));
+        let layer = NormLayer::<Test>::new(init, alloc, 3);
+
+        (layer, weights)
+    }
+
+    const INPUTS: [f32s; 1] = [f32s::new(1., 2., 3., 4.)];
+    const TOLERANCE: f32 = 0.0001;
+
+    #[test]
+    fn norm_eval() {
+        let (mut layer, weights) = create_layer();
+
+        layer.eval(&INPUTS, Mediator::new(&weights));
+        let output = &as_scalar(&layer.output())[0..3];
+        let expected = &[2.0, 8.0, 18.0];
+
+        check(expected, output, TOLERANCE, "output");
+    }
+
+    /// Computes the various derivatives to be tested.
+    /// [weight_deriv, bias_deriv, out_deriv]
+    fn derivs() -> [Vec<f32>; 3] {
+        let (mut layer, weights) = create_layer();
+
+        let input = [f32s::new(1., 2., 3., 4.)];
+        layer.eval(&input, Mediator::new(&weights));
+
+        let mut deriv = vec![f32s::splat(0.); weights.len()];
+        let mut out_deriv = vec![f32s::splat(0.); layer.actual_size];
+
+        layer.ready();
+        layer
+            .calculate_derivatives(
+                Mediator::new(&weights),
+                Mediator::new(deriv.as_mut()),
+                &INPUTS,
+                &[f32s::new(0.1, 0.2, 0.3, 0.4)],
+                &mut out_deriv,
+            )
+            .unwrap();
+
+        let mediator = Mediator::<&mut [_], _>::new(deriv.as_mut());
+        let weight_deriv = &as_scalar(&mediator.get(&layer.w_gradients))[0..3];
+        let bias_deriv = &as_scalar(&mediator.get(&layer.b_gradients))[0..3];
+        let out_deriv = &as_scalar(&out_deriv)[0..3];
+        [
+            weight_deriv.to_owned(),
+            bias_deriv.to_owned(),
+            out_deriv.to_owned(),
+        ]
+    }
+
+    #[test]
+    fn norm_backprop_weights() {
+        let output = &derivs()[0];
+        let expected = [0.2, 0.8, 1.8];
+        check(&expected, output, TOLERANCE, "weight derivatives");
+    }
+
+    #[test]
+    fn norm_backprop_bias() {
+        let output = &derivs()[1];
+        let expected = [0.2, 0.4, 0.6];
+        check(&expected, output, TOLERANCE, "bias derivatives");
+    }
+
+    #[test]
+    fn norm_backprop_output() {
+        let output = &derivs()[2];
+        let expected = [0.2, 0.8, 1.8];
+        check(&expected, output, TOLERANCE, "output derivatives");
     }
 }

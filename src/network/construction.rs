@@ -2,7 +2,6 @@ use crate::allocator::Allocator;
 use crate::f32s;
 use crate::layers::{Layer, LayerBuilder};
 
-
 /// This trait allows network architectures to be build using the LinearBuilder
 pub trait LinearConstruction<T> {
     fn construct(weights: Vec<f32s>, layers: Vec<T>) -> Self;
@@ -39,7 +38,7 @@ impl<L: Layer, O: LinearConstruction<L>> LinearBuilder<L, O> {
     }
 
     /// Adds the result of calling `func` on the layer produced by the given layer builder.
-    pub fn add_with<T, F, U>(mut self, layer: T, func: F) -> Self 
+    pub fn add_with<T, F, U>(mut self, layer: T, func: F) -> Self
     where
         T: LayerBuilder,
         F: FnOnce(T::Output) -> U,
@@ -50,7 +49,7 @@ impl<L: Layer, O: LinearConstruction<L>> LinearBuilder<L, O> {
         self.layers.push(func(layer).into());
         self
     }
-    
+
     /// Adds all of the layers provided by the `builders` argument.
     pub fn add_layers<T>(mut self, builders: T) -> Self
     where
@@ -75,8 +74,8 @@ impl<L: Layer, O: LinearConstruction<L>> LinearBuilder<L, O> {
 }
 
 impl<O: LinearConstruction<Box<dyn Layer>>> LinearBuilder<Box<dyn Layer>, O> {
-    pub fn add_boxed<T>(mut self, layer: T) -> Self 
-    where 
+    pub fn add_boxed<T>(mut self, layer: T) -> Self
+    where
         T: LayerBuilder,
         T::Output: Layer + 'static,
     {

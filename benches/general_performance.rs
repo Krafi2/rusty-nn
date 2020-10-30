@@ -5,7 +5,7 @@ use test::{black_box, Bencher};
 
 use rusty_nn::activation_functions::Sigmoid;
 use rusty_nn::initializer::XavierInit;
-use rusty_nn::layers::{DenseBuilder, InputBuilder, BasicLayer};
+use rusty_nn::layers::{BasicLayer, DenseBuilder, InputBuilder};
 use rusty_nn::loss_functions::SquaredError;
 use rusty_nn::network::{FeedForward, LinearBuilder};
 use rusty_nn::optimizer::{GradientDescent, OptimizerBase};
@@ -25,13 +25,23 @@ fn training_speed(b: &mut Bencher) {
     let mut xavier = XavierInit::new();
     let network: FeedForward<BasicLayer> = LinearBuilder::new()
         .add(InputBuilder::new(1))
-        .add(DenseBuilder::<Sigmoid, _>::new(&mut xavier, 100, true, true))
-        .add(DenseBuilder::<Sigmoid, _>::new(&mut xavier, 100, true, true))
+        .add(DenseBuilder::<Sigmoid, _>::new(
+            &mut xavier,
+            100,
+            true,
+            true,
+        ))
+        .add(DenseBuilder::<Sigmoid, _>::new(
+            &mut xavier,
+            100,
+            true,
+            true,
+        ))
         .add(DenseBuilder::<Sigmoid, _>::new(&mut xavier, 1, true, true))
         .build()
         .unwrap();
 
-    let optimizer = OptimizerBase::<SquaredError, _, _>::new(network, GradientDescent);
+    let optimizer = OptimizerBase::<SquaredError, _, _>::new(network, GradientDescent::builder());
     let mut trainer = DefaultBuilder::new()
         .config(config)
         .training_data(t_data)

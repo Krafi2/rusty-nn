@@ -1,6 +1,6 @@
 use rusty_nn::activation_functions::{ActivFunc, Sigmoid};
 use rusty_nn::initializer::XavierInit;
-use rusty_nn::layers::{DenseBuilder, InputBuilder, BasicLayer};
+use rusty_nn::layers::{BasicLayer, DenseBuilder, InputBuilder};
 use rusty_nn::loss_functions::SquaredError;
 use rusty_nn::network::{FeedForward, LinearBuilder, Network};
 use rusty_nn::optimizer::{GradientDescent, OptimizerBase};
@@ -28,7 +28,12 @@ pub fn basic_trainer(
 {
     let network = LinearBuilder::new()
         .add(InputBuilder::new(1))
-        .add(DenseBuilder::<Sigmoid, _>::new(XavierInit::new(), 1, true, true))
+        .add(DenseBuilder::<Sigmoid, _>::new(
+            XavierInit::new(),
+            1,
+            true,
+            true,
+        ))
         .build()
         .unwrap();
 
@@ -40,8 +45,7 @@ pub fn trainer_from_nn<T: Network>(
     config: TrainingConfig,
     data: Vec<[f32; 2]>,
 ) -> DefaultTrainer<OptimizerBase<SquaredError, GradientDescent, T>, [f32; 2]> {
-
-    let optimizer = OptimizerBase::new(nn, GradientDescent);
+    let optimizer = OptimizerBase::new(nn, GradientDescent::builder());
     DefaultBuilder::new()
         .optimizer(optimizer)
         .config(config)
