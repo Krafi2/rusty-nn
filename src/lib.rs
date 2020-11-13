@@ -1,10 +1,9 @@
-pub mod activation_functions;
+pub mod a_funcs;
 pub mod allocator;
-pub mod default_trainer;
 pub mod helpers;
 pub mod initializer;
 pub mod layers;
-pub mod loss_functions;
+pub mod loss_funcs;
 pub mod network;
 pub mod optimizer;
 pub mod trainer;

@@ -1,11 +1,10 @@
-use super::{BasicLayer, GradError, Layer, LayerArch, LayerBuilder, OutShape};
-use crate::activation_functions::Identity;
+use super::{BasicLayer, GradError, Layer, LayerArch, LayerBuilder, LayerGradients, OutShape};
+use crate::a_funcs::Identity;
 use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;
-use crate::helpers::{as_scalar, as_scalar_mut, empty_vec_simd, least_size};
+use crate::helpers::{as_scalar_mut, empty_vec_simd, least_size};
 
 use serde::{Deserialize, Serialize};
-use small_table::Table;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct InputLayer {
@@ -20,27 +19,8 @@ impl Layer for InputLayer {
         self.activations = vec![f32s::splat(0.); self.actual_size]
     }
 
-    fn eval(&mut self, _inputs: &[f32s], _med: Mediator<&[f32s], WeightHndl>) {
-        panic!("Input layers cannot be evaluated")
-    }
-
-    fn calculate_derivatives(
-        &mut self,
-        _weights: Mediator<&[f32s], WeightHndl>,
-        _self_deriv: Mediator<&mut [f32s], GradHdnl>,
-        _inputs: &[f32s],
-        _in_deriv: &[f32s],
-        _out_deriv: &mut [f32s],
-    ) -> Result<(), GradError> {
-        panic!("Input layers cannot calculate derivatives")
-    }
-
-    fn debug(&self, _med: Mediator<&[f32s], WeightHndl>) -> String {
-        Table::new(self.size, 6, 2)
-            .line()
-            .row(as_scalar(&self.activations))
-            .line()
-            .build()
+    fn eval(&mut self, _inputs: &[f32s], _med: Mediator<&[f32s], WeightHndl>) -> &[f32s] {
+        self.output()
     }
 
     fn output(&self) -> &[f32s] {
@@ -69,10 +49,19 @@ impl Layer for InputLayer {
         //copy the slice, leaving any extra elements as they are so copy_from_slice doesn't panic
         as_scalar_mut(&mut self.activations)[..self.size].copy_from_slice(activations);
     }
+}
 
-    fn ready(&mut self) {}
-
-    fn unready(&mut self) {}
+impl LayerGradients for InputLayer {
+    fn calc_gradients(
+        &mut self,
+        _weights: Mediator<&[f32s], WeightHndl>,
+        _self_deriv: Mediator<&mut [f32s], GradHdnl>,
+        _inputs: &[f32s],
+        _in_deriv: &[f32s],
+        _out_deriv: &mut [f32s],
+    ) -> Result<(), GradError> {
+        panic!("Input layers cannot calculate derivatives")
+    }
 }
 
 impl InputLayer {

@@ -65,15 +65,46 @@ pub fn least_size(n: usize, size: usize) -> usize {
 
 //should be safe because the simd is *packed*
 
-#[inline(always)]
+#[inline]
 pub fn as_scalar(arr: &[f32s]) -> &[f32] {
     let ptr = arr.as_ptr() as *const f32;
     unsafe { std::slice::from_raw_parts(ptr, arr.len() * f32s::lanes()) }
 }
-#[inline(always)]
+
+#[inline]
 pub fn as_scalar_mut(arr: &mut [f32s]) -> &mut [f32] {
     let ptr = arr.as_mut_ptr() as *mut f32;
     unsafe { std::slice::from_raw_parts_mut(ptr, arr.len() * f32s::lanes()) }
+}
+
+/// This trait provides the [as_scalar](self::as_scalar) and [as_scalar_mut](self::as_scalar_mut)
+/// in a more pleasant to use way.
+pub trait AsScalarExt<'a>
+where
+    Self: 'a,
+{
+    fn as_scalar(&'a self) -> &'a [f32]
+    where
+        Self: AsRef<[f32s]>;
+    fn as_scalar_mut(&'a mut self) -> &'a mut [f32]
+    where
+        Self: AsMut<[f32s]>;
+}
+
+impl<'a, T: AsRef<[f32s]> + 'a> AsScalarExt<'a> for T {
+    fn as_scalar(&'a self) -> &'a [f32]
+    where
+        Self: AsRef<[f32s]>,
+    {
+        as_scalar(self.as_ref())
+    }
+
+    fn as_scalar_mut(&'a mut self) -> &'a mut [f32]
+    where
+        Self: AsMut<[f32s]>,
+    {
+        as_scalar_mut(self.as_mut())
+    }
 }
 
 pub fn simd_with<T>(mut iter: T) -> f32s

@@ -24,7 +24,7 @@ impl<L: Layer, O: LinearConstruction<L>> LinearBuilder<L, O> {
     }
 
     /// Adds a single layer to the network.
-    pub fn add<T>(mut self, layer: T) -> Self
+    pub fn add_layer<T>(mut self, layer: T) -> Self
     where
         T: LayerBuilder,
         T::Output: Into<L>,
@@ -37,7 +37,7 @@ impl<L: Layer, O: LinearConstruction<L>> LinearBuilder<L, O> {
         self
     }
 
-    /// Adds the result of calling `func` on the layer produced by the given layer builder.
+    /// Adds the result of calling `func` on the layer produced by the provided layer builder.
     pub fn add_with<T, F, U>(mut self, layer: T, func: F) -> Self
     where
         T: LayerBuilder,
@@ -58,7 +58,7 @@ impl<L: Layer, O: LinearConstruction<L>> LinearBuilder<L, O> {
         <T::Item as LayerBuilder>::Output: Into<L>,
     {
         for builder in builders {
-            self = self.add(builder);
+            self = self.add_layer(builder);
         }
         self
     }

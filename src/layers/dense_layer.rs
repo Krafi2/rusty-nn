@@ -1,15 +1,16 @@
-use super::{BasicLayer, FromArch, GradError, Layer, LayerArch, LayerBuilder, OutShape};
-use crate::activation_functions::ActivFunc;
+use super::{
+    BasicLayer, FromArch, GradError, Layer, LayerArch, LayerBuilder, LayerGradients, OutShape,
+};
+use crate::a_funcs::ActivFunc;
 use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;
 use crate::helpers::{as_scalar, as_scalar_mut, empty_vec_simd, least_size, splat_n, sum};
 use crate::initializer::Initializer;
 
 use serde::{Deserialize, Serialize};
-use small_table::Table;
 
-#[derive(Serialize, Deserialize)]
-///Your run of the mill fully connected (dense) layer
+#[derive(Serialize, Deserialize, Debug)]
+/// Your run of the mill fully connected (dense) layer
 pub struct DenseLayer<T: ActivFunc> {
     in_size: usize,
     actual_in: usize, //input size rounded up to the nearest simd type
@@ -42,7 +43,7 @@ impl<T: ActivFunc> Layer for DenseLayer<T> {
         self.temp = splat_n(self.actual_in, 0.);
     }
 
-    fn eval(&mut self, inputs: &[f32s], med: Mediator<&[f32s], WeightHndl>) {
+    fn eval(&mut self, inputs: &[f32s], med: Mediator<&[f32s], WeightHndl>) -> &[f32s] {
         let weights = med.get(&self.weights);
         let biases = med.get(&self.biases);
 
@@ -73,11 +74,35 @@ impl<T: ActivFunc> Layer for DenseLayer<T> {
             .iter()
             .zip(as_scalar_mut(&mut self.activations))
         {
-            *o = T::evaluate(*wi)
+            *o = T::evaluate(*wi);
         }
+        self.output()
     }
 
-    fn calculate_derivatives(
+    fn output(&self) -> &[f32s] {
+        &self.activations
+    }
+    fn out_size(&self) -> usize {
+        self.size
+    }
+    fn actual_out(&self) -> usize {
+        self.actual_size
+    }
+    fn in_size(&self) -> usize {
+        self.in_size
+    }
+    fn out_shape(&self) -> OutShape {
+        OutShape {
+            dims: vec![self.out_size()],
+        }
+    }
+    fn weight_count(&self) -> usize {
+        self.actual_in * self.size + self.actual_size
+    }
+}
+
+impl<T: ActivFunc> LayerGradients for DenseLayer<T> {
+    fn calc_gradients(
         &mut self,
         weights: Mediator<&[f32s], WeightHndl>,
         mut self_deriv: Mediator<&mut [f32s], GradHdnl>,
@@ -144,57 +169,6 @@ impl<T: ActivFunc> Layer for DenseLayer<T> {
         }
         Ok(())
     }
-
-    fn debug(&self, med: Mediator<&[f32s], WeightHndl>) -> String {
-        let s = Table::new(self.in_size + 1, 6, 2)
-            .line()
-            .row(
-                (0..self.in_size)
-                    .map(|i| usize::to_string(&i))
-                    .chain(std::iter::once("b".to_string())),
-            )
-            .rows(
-                med.get(&self.weights)
-                    .chunks(self.actual_in)
-                    .zip(as_scalar(&med.get(&self.biases)))
-                    .map(|(chunk, bias)| {
-                        as_scalar(chunk)
-                            .iter()
-                            .take(self.in_size)
-                            .chain(std::iter::once(bias))
-                    }),
-            )
-            .line()
-            .with_caption("a", as_scalar(&self.activations))
-            .line()
-            .build();
-        s
-    }
-
-    fn output(&self) -> &[f32s] {
-        &self.activations
-    }
-    fn out_size(&self) -> usize {
-        self.size
-    }
-    fn actual_out(&self) -> usize {
-        self.actual_size
-    }
-    fn in_size(&self) -> usize {
-        self.in_size
-    }
-    fn out_shape(&self) -> OutShape {
-        OutShape {
-            dims: vec![self.out_size()],
-        }
-    }
-    fn weight_count(&self) -> usize {
-        self.actual_in * self.size + self.actual_size
-    }
-
-    fn ready(&mut self) {}
-
-    fn unready(&mut self) {}
 }
 
 impl<T: ActivFunc> DenseLayer<T> {
@@ -253,20 +227,20 @@ impl<T: ActivFunc> Clone for DenseLayer<T> {
     fn clone(&self) -> Self {
         unsafe {
             Self {
-                in_size: self.in_size.clone(),
-                actual_in: self.actual_in.clone(),
-                size: self.size.clone(),
-                actual_size: self.actual_size.clone(),
+                in_size: self.in_size,
+                actual_in: self.actual_in,
+                size: self.size,
+                actual_size: self.actual_size,
                 weights: self.weights.clone(),
                 biases: self.biases.clone(),
                 w_gradients: self.w_gradients.clone(),
                 b_gradients: self.b_gradients.clone(),
-                update_weights: self.update_weights.clone(),
-                update_biases: self.update_biases.clone(),
+                update_weights: self.update_weights,
+                update_biases: self.update_biases,
                 weighted_inputs: self.weighted_inputs.clone(),
                 activations: self.activations.clone(),
                 temp: self.temp.clone(),
-                marker_: self.marker_.clone(),
+                marker_: self.marker_,
             }
         }
     }
@@ -322,7 +296,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activation_functions::Test;
+    use crate::a_funcs::Test;
     use crate::helpers::as_scalar;
     use crate::initializer::WeightInit;
     use crate::layers::tests::*;
@@ -363,7 +337,7 @@ mod tests {
 
         layer.ready();
         layer
-            .calculate_derivatives(
+            .calc_gradients(
                 Mediator::new(&weights),
                 Mediator::new(deriv.as_mut()),
                 &INPUTS,

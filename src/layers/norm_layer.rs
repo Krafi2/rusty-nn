@@ -1,5 +1,7 @@
-use super::{BasicLayer, FromArch, GradError, Layer, LayerArch, LayerBuilder, OutShape};
-use crate::activation_functions::ActivFunc;
+use super::{
+    BasicLayer, FromArch, GradError, Layer, LayerArch, LayerBuilder, LayerGradients, OutShape,
+};
+use crate::a_funcs::ActivFunc;
 use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;
 use crate::helpers::{
@@ -8,11 +10,10 @@ use crate::helpers::{
 use crate::initializer::Initializer;
 
 use serde::{Deserialize, Serialize};
-use small_table::Table;
 
 /// Layer type where every neuron operates only on a single output of the layer below.
 /// Useful when you want to normalize some values
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct NormLayer<T: ActivFunc> {
     size: usize,
     actual_size: usize,
@@ -36,7 +37,7 @@ impl<T: ActivFunc> Layer for NormLayer<T> {
         self.activations = splat_n(self.actual_size, 0.);
     }
 
-    fn eval(&mut self, inputs: &[f32s], med: Mediator<&[f32s], WeightHndl>) {
+    fn eval(&mut self, inputs: &[f32s], med: Mediator<&[f32s], WeightHndl>) -> &[f32s] {
         for (((inp, w), b), wi) in inputs
             .iter()
             .zip(med.get(&self.weights))
@@ -52,9 +53,34 @@ impl<T: ActivFunc> Layer for NormLayer<T> {
         {
             *o = T::evaluate(*wi);
         }
+
+        self.output()
     }
 
-    fn calculate_derivatives(
+    fn output(&self) -> &[f32s] {
+        &self.activations
+    }
+    fn out_size(&self) -> usize {
+        self.size
+    }
+    fn actual_out(&self) -> usize {
+        self.actual_size
+    }
+    fn in_size(&self) -> usize {
+        self.size
+    }
+    fn out_shape(&self) -> OutShape {
+        OutShape {
+            dims: vec![self.out_size()],
+        }
+    }
+    fn weight_count(&self) -> usize {
+        self.actual_size * 2
+    }
+}
+
+impl<T: ActivFunc> LayerGradients for NormLayer<T> {
+    fn calc_gradients(
         &mut self,
         weights: Mediator<&[f32s], WeightHndl>,
         mut self_deriv: Mediator<&mut [f32s], GradHdnl>,
@@ -97,42 +123,6 @@ impl<T: ActivFunc> Layer for NormLayer<T> {
         }
         Ok(())
     }
-
-    fn debug(&self, med: Mediator<&[f32s], WeightHndl>) -> String {
-        Table::new(self.size, 6, 2)
-            .line()
-            .with_caption("w", as_scalar(&med.get(&self.weights)))
-            .with_caption("b", as_scalar(&med.get(&self.biases)))
-            .line()
-            .with_caption("a", as_scalar(&self.activations))
-            .line()
-            .build()
-    }
-
-    fn output(&self) -> &[f32s] {
-        &self.activations
-    }
-    fn out_size(&self) -> usize {
-        self.size
-    }
-    fn actual_out(&self) -> usize {
-        self.actual_size
-    }
-    fn in_size(&self) -> usize {
-        self.size
-    }
-    fn out_shape(&self) -> OutShape {
-        OutShape {
-            dims: vec![self.out_size()],
-        }
-    }
-    fn weight_count(&self) -> usize {
-        self.actual_size * 2
-    }
-
-    fn ready(&mut self) {}
-
-    fn unready(&mut self) {}
 }
 
 impl<T: ActivFunc> NormLayer<T> {
@@ -171,15 +161,15 @@ impl<T: ActivFunc> Clone for NormLayer<T> {
     fn clone(&self) -> Self {
         unsafe {
             Self {
-                size: self.size.clone(),
-                actual_size: self.actual_size.clone(),
+                size: self.size,
+                actual_size: self.actual_size,
                 weights: self.weights.clone(),
                 biases: self.biases.clone(),
                 w_gradients: self.w_gradients.clone(),
                 b_gradients: self.b_gradients.clone(),
                 weighted_inputs: self.weighted_inputs.clone(),
                 activations: self.activations.clone(),
-                marker_: self.marker_.clone(),
+                marker_: self.marker_,
             }
         }
     }
@@ -221,7 +211,7 @@ impl<T: ActivFunc, I: Initializer> LayerBuilder for NormBuilder<T, I> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activation_functions::Test;
+    use crate::a_funcs::Test;
     use crate::helpers::as_scalar;
     use crate::initializer::WeightInit;
     use crate::layers::tests::*;
@@ -262,7 +252,7 @@ mod tests {
 
         layer.ready();
         layer
-            .calculate_derivatives(
+            .calc_gradients(
                 Mediator::new(&weights),
                 Mediator::new(deriv.as_mut()),
                 &INPUTS,

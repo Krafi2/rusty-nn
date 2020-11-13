@@ -1,28 +1,29 @@
-use rusty_nn::layers::BasicLayer;
-use rusty_nn::network::{FeedForward, Network};
-use rusty_nn::trainer::Trainer;
-
-mod common;
+use rusty_nn::a_funcs::{Identity, Sigmoid};
+use rusty_nn::helpers::{as_scalar, AsScalarExt};
+use rusty_nn::initializer::XavierInit;
+use rusty_nn::layers::{BasicLayer, DenseBuilder, InputBuilder, NormBuilder};
+use rusty_nn::network::{FeedForward, LinearBuilder, Network};
 
 #[test]
-fn save_and_load() -> anyhow::Result<()> {
-    let mut trainer = common::basic_trainer();
-    trainer.train()?;
+fn save_and_load() {
+    let mut init = XavierInit::new();
+    let mut network = LinearBuilder::<BasicLayer, FeedForward<_>>::new()
+        .add_layer(InputBuilder::new(3))
+        .add_layer(DenseBuilder::<Sigmoid, _>::new(&mut init, 5, true, true))
+        .add_layer(NormBuilder::<Identity, _>::new(&mut init))
+        .build()
+        .unwrap();
 
-    assert!(trainer.tb().loss() < 0.0001); //assert we've converged
+    let input = [1., 2., 3.];
 
-    trainer
-        .network()
-        .try_save("temporary_file_to_test_whether_saving_works".as_ref())?;
-    let network =
-        FeedForward::<BasicLayer>::from_file("temporary_file_to_test_whether_saving_works")?;
-    std::fs::remove_file("temporary_file_to_test_whether_saving_works")?;
+    network.predict(&input);
+    let prediction = as_scalar(network.output());
+    let str = serde_json::to_string(&network).expect("Serialization failed");
+    let mut network: FeedForward<BasicLayer> =
+        serde_json::from_str(&str).expect("Derserialization failed");
 
-    let mut trainer = common::trainer_from_nn(network, common::basic_config(), common::t_data());
-
-    trainer.do_epoch()?; //test training still works
-    trainer.do_batch()?;
-
-    assert!(trainer.tb().loss() < 0.0001); //assert nothing got screwed up when saving and loading
-    Ok(())
+    assert!(
+        network.predict(&input).as_scalar() == prediction,
+        "Network structure damaged during saving."
+    );
 }

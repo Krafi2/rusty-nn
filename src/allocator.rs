@@ -26,7 +26,7 @@ impl<T: SealedHandle> Handle for T {}
 /// Create a new  handle struct called $name
 macro_rules! handle {
     ($name:ident) => {
-        #[derive(Serialize, Deserialize)]
+        #[derive(Serialize, Deserialize, Debug)]
         pub struct $name {
             range: Range<usize>,
         }

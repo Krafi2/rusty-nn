@@ -10,7 +10,7 @@ use self::dense_layer::DenseLayer;
 use self::input_layer::InputLayer;
 use self::norm_layer::NormLayer;
 
-use crate::activation_functions::*;
+use crate::a_funcs::{ActivFunc, Identity, ReLU, SiLU, Sigmoid, TanH};
 use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
 use crate::f32s;
 
@@ -29,28 +29,7 @@ pub trait Layer {
     fn rebuild(&mut self);
 
     /// Evaluate the layer's output.
-    fn eval(&mut self, inputs: &[f32s], med: Mediator<&[f32s], WeightHndl>);
-
-    /// Ready the network for optimization, if already readied do nothing.
-    fn ready(&mut self);
-
-    /// Undo the changes made by ready; if the network isn't readied do nothing.
-    fn unready(&mut self);
-
-    /// Calculates derivatives of the layer's weights. `in_deriv` are the partial derivatives at the end of the next layer
-    /// and `out_deriv` are the derivatives at the layer's input, which will be filled in.
-    /// Returns None if the layer isn't readied.
-    fn calculate_derivatives(
-        &mut self,
-        weights: Mediator<&[f32s], WeightHndl>,
-        self_deriv: Mediator<&mut [f32s], GradHdnl>,
-        inputs: &[f32s],
-        in_deriv: &[f32s],
-        out_deriv: &mut [f32s],
-    ) -> Result<(), GradError>;
-
-    /// Return string containing formated debug information
-    fn debug(&self, med: Mediator<&[f32s], WeightHndl>) -> String;
+    fn eval(&mut self, inputs: &[f32s], med: Mediator<&[f32s], WeightHndl>) -> &[f32s];
 
     /// Get layer's output
     fn output(&self) -> &[f32s];
@@ -74,6 +53,30 @@ pub trait Layer {
     }
 }
 
+#[enum_dispatch]
+pub trait LayerGradients: Layer {
+    /// Calculates derivatives of the layer's weights. `in_deriv` are the partial derivatives at the end of the next layer
+    /// and `out_deriv` are the derivatives at the layer's input, which will be filled in.
+    /// Returns None if the layer isn't readied.
+    fn calc_gradients(
+        &mut self,
+        weights: Mediator<&[f32s], WeightHndl>,
+        self_deriv: Mediator<&mut [f32s], GradHdnl>,
+        inputs: &[f32s],
+        in_deriv: &[f32s],
+        out_deriv: &mut [f32s],
+    ) -> Result<(), GradError>;
+
+    /// Ready the network for optimization, if already readied do nothing.
+    fn ready(&mut self) {}
+
+    /// Undo the changes made by ready; if the network isn't readied do nothing.
+    fn unready(&mut self) {}
+
+    /// Reset gradients to zero
+    fn reset_gradients(&mut self) {}
+}
+
 /// Trait all layer builders must implement in order to be added to a NetworkBuilder via the add function.
 pub trait LayerBuilder {
     type Output: Layer;
@@ -84,7 +87,7 @@ pub trait LayerBuilder {
 /// Error encountered when calculating the weight gradients.
 /// Currently this error simply means that the queried structure wasn't
 /// properly initialized.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct GradError;
 
 impl GradError {
@@ -106,20 +109,22 @@ pub struct OutShape {
     pub dims: Vec<usize>,
 }
 
-#[enum_dispatch(Layer)]
-#[derive(Serialize, Deserialize, Clone)]
 /// This enum represents the architecture of a layer. It is primarily used
 /// in the BasicLayer enum to fully describe a layer.
+#[enum_dispatch(Layer)]
+#[enum_dispatch(LayerGradients)]
+#[derive(Serialize, Deserialize, Clone)]
 pub enum LayerArch<T: ActivFunc> {
     DenseLayer(DenseLayer<T>),
     InputLayer(InputLayer),
     NormLayer(NormLayer<T>),
 }
 
-#[enum_dispatch(Layer)]
-#[derive(Serialize, Deserialize, Clone)]
 /// This enum describes the architecture and activation function of a layer
 /// so it can be easily serialized and deserialized.
+#[enum_dispatch(Layer)]
+#[enum_dispatch(LayerGradients)]
+#[derive(Serialize, Deserialize, Clone)]
 pub enum BasicLayer {
     Sigmoid(LayerArch<Sigmoid>),
     Identity(LayerArch<Identity>),
@@ -151,66 +156,48 @@ impl_from_arch!(TanH);
 impl_from_arch!(SiLU);
 impl_from_arch!(ReLU);
 
+macro_rules! impl_layer_from_deref {
+    () => {
+        fn rebuild(&mut self) {
+            <Self as DerefMut>::deref_mut(self).rebuild()
+        }
+
+        fn eval(&mut self, inputs: &[f32s], med: Mediator<&[f32s], WeightHndl>) -> &[f32s] {
+            <Self as DerefMut>::deref_mut(self).eval(inputs, med)
+        }
+
+        fn output(&self) -> &[f32s] {
+            <Self as Deref>::deref(self).output()
+        }
+
+        fn out_size(&self) -> usize {
+            <Self as Deref>::deref(self).out_size()
+        }
+
+        fn actual_out(&self) -> usize {
+            <Self as Deref>::deref(self).actual_out()
+        }
+
+        fn in_size(&self) -> usize {
+            <Self as Deref>::deref(self).in_size()
+        }
+
+        fn out_shape(&self) -> OutShape {
+            <Self as Deref>::deref(self).out_shape()
+        }
+
+        fn weight_count(&self) -> usize {
+            <Self as Deref>::deref(self).weight_count()
+        }
+
+        fn set_activations(&mut self, activations: &[f32]) {
+            <Self as DerefMut>::deref_mut(self).set_activations(activations)
+        }
+    };
+}
+
 impl<T: Layer + ?Sized> Layer for Box<T> {
-    fn rebuild(&mut self) {
-        <Self as DerefMut>::deref_mut(self).rebuild()
-    }
-
-    fn eval(&mut self, inputs: &[f32s], med: Mediator<&[f32s], WeightHndl>) {
-        <Self as DerefMut>::deref_mut(self).eval(inputs, med)
-    }
-
-    fn ready(&mut self) {
-        <Self as DerefMut>::deref_mut(self).ready()
-    }
-
-    fn unready(&mut self) {
-        <Self as DerefMut>::deref_mut(self).unready()
-    }
-
-    fn calculate_derivatives(
-        &mut self,
-        weights: Mediator<&[f32s], WeightHndl>,
-        self_deriv: Mediator<&mut [f32s], GradHdnl>,
-        inputs: &[f32s],
-        in_deriv: &[f32s],
-        out_deriv: &mut [f32s],
-    ) -> Result<(), GradError> {
-        <Self as DerefMut>::deref_mut(self)
-            .calculate_derivatives(weights, self_deriv, inputs, in_deriv, out_deriv)
-    }
-
-    fn debug(&self, med: Mediator<&[f32s], WeightHndl>) -> String {
-        <Self as Deref>::deref(self).debug(med)
-    }
-
-    fn output(&self) -> &[f32s] {
-        <Self as Deref>::deref(self).output()
-    }
-
-    fn out_size(&self) -> usize {
-        <Self as Deref>::deref(self).out_size()
-    }
-
-    fn actual_out(&self) -> usize {
-        <Self as Deref>::deref(self).actual_out()
-    }
-
-    fn in_size(&self) -> usize {
-        <Self as Deref>::deref(self).in_size()
-    }
-
-    fn out_shape(&self) -> OutShape {
-        <Self as Deref>::deref(self).out_shape()
-    }
-
-    fn weight_count(&self) -> usize {
-        <Self as Deref>::deref(self).weight_count()
-    }
-
-    fn set_activations(&mut self, activations: &[f32]) {
-        <Self as DerefMut>::deref_mut(self).set_activations(activations)
-    }
+    impl_layer_from_deref!();
 }
 
 #[cfg(test)]

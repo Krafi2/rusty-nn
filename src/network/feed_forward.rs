@@ -9,26 +9,15 @@ use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
 };
 
-use super::{construction::LinearConstruction, Network};
+use super::{construction::LinearConstruction, CalcGradients, Network};
 use crate::allocator::Mediator;
 use crate::f32s;
 use crate::helpers::{as_scalar, as_scalar_mut, zero_simd};
-use crate::layers::{GradError, Layer};
-
-mod private_ {
-    use super::*;
-    pub trait FeedForwardMarker_ {
-        type Layer: Layer;
-        fn decompose(&self) -> (&[Self::Layer], &[f32s], &Option<Grads>);
-        fn decompose_mut(&mut self) -> (&mut [Self::Layer], &mut [f32s], &mut Option<Grads>);
-        fn try_save(&self, path: &std::path::Path) -> anyhow::Result<bool>;
-    }
-}
-use private_::FeedForwardMarker_;
+use crate::layers::{GradError, Layer, LayerGradients};
 
 /// This struct represents a neural network and supports the basic functionality of giving predictions based on provided input.
 /// Additionally, it can be both saved to and loaded from a file.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(into = "NetworkUnvalidated<T>", try_from = "NetworkUnvalidated<T>")]
 pub struct FeedForward<T: Layer + Clone> {
     weights: Vec<f32s>,
@@ -37,183 +26,186 @@ pub struct FeedForward<T: Layer + Clone> {
     grads: Option<Grads>,
 }
 
-impl<T: Layer + Clone + Serialize> FeedForwardMarker_ for FeedForward<T> {
-    type Layer = T;
-
-    fn try_save(&self, path: &std::path::Path) -> anyhow::Result<bool> {
-        fs::write(path, serde_json::to_string(&self)?)?;
-        Ok(true)
-    }
-
-    fn decompose(&self) -> (&[Self::Layer], &[f32s], &Option<Grads>) {
-        (&self.layers, &self.weights, &self.grads)
-    }
-
-    fn decompose_mut(&mut self) -> (&mut [Self::Layer], &mut [f32s], &mut Option<Grads>) {
-        (&mut self.layers, &mut self.weights, &mut self.grads)
-    }
-}
-
 /// This struct behaves exactly the same as [FeedForward](self::FeedForward) with the exception
 /// that the layers it contains don't need to implement Serialize and Deserialize.
 /// This means that it can't be saved but can use layers which cannot be serialized.
-#[derive(Clone)]
+#[derive(Debug)]
 pub struct FeedForwardNoSer<T: Layer> {
     weights: Vec<f32s>,
     layers: Vec<T>,
     grads: Option<Grads>,
 }
-impl<T: Layer> FeedForwardMarker_ for FeedForwardNoSer<T> {
-    type Layer = T;
-    fn try_save(&self, _path: &std::path::Path) -> anyhow::Result<bool> {
-        Ok(false) // We cannot save
-    }
 
-    fn decompose(&self) -> (&[Self::Layer], &[f32s], &Option<Grads>) {
-        (&self.layers, &self.weights, &self.grads)
-    }
+#[derive(Clone, Debug)]
+pub struct Grads {
+    gradients: Vec<f32s>,
+    buffer1: Vec<f32s>,
+    buffer2: Vec<f32s>,
+}
 
-    fn decompose_mut(&mut self) -> (&mut [Self::Layer], &mut [f32s], &mut Option<Grads>) {
-        (&mut self.layers, &mut self.weights, &mut self.grads)
+impl Grads {
+    fn new<T: Layer>(weights: &[f32s], layers: &[T]) -> Self {
+        let wc = weights.len();
+        let max = layers.iter().map(|l| l.out_size()).max().unwrap();
+
+        Self {
+            gradients: vec![f32s::splat(0.); wc],
+            buffer1: vec![f32s::splat(0.); max],
+            buffer2: vec![f32s::splat(0.); max],
+        }
     }
 }
 
-impl<T: FeedForwardMarker_> Network for T {
-    fn predict(&mut self, input: &[f32]) {
-        let (layers, weights, _) = self.decompose_mut();
-        layers.first_mut().unwrap().set_activations(input);
+macro_rules! feed_forward_impl {
+    () => {
+        fn predict(&mut self, input: &[f32]) -> &[f32s] {
+            self.layers.first_mut().unwrap().set_activations(input);
 
-        let (l, layers) = layers.split_first_mut().unwrap();
-        let mut input = l.output();
-        for l in layers {
-            l.eval(input, Mediator::new(weights));
-            input = l.output();
-        }
-    }
-
-    fn output(&self) -> &[f32s] {
-        self.decompose().0.last().unwrap().output()
-    }
-
-    fn output_scalar(&self) -> &[f32] {
-        let last = self.decompose().0.last().unwrap();
-        &as_scalar(last.output())[..last.out_size()]
-    }
-
-    fn weights(&self) -> &[f32s] {
-        self.decompose().1
-    }
-
-    fn weights_mut(&mut self) -> &mut [f32s] {
-        self.decompose_mut().1
-    }
-
-    fn try_save(&self, path: &std::path::Path) -> anyhow::Result<bool> {
-        self.try_save(path)
-    }
-
-    fn debug(&self) {
-        println!("Diagnostic information for network:");
-        for (i, l) in self.decompose().0.iter().enumerate() {
-            println!("Layer {}:", i);
-            println!("{}", l.debug(Mediator::new(self.weights())));
-        }
-    }
-
-    fn in_size(&self) -> usize {
-        self.decompose().0.first().unwrap().out_size()
-    }
-
-    fn out_size(&self) -> usize {
-        self.decompose().0.last().unwrap().out_size()
-    }
-
-    fn ready(&mut self) {
-        if self.decompose_mut().2.is_none() {
-            let grads = Grads::new(self);
-            self.decompose_mut().2.replace(grads);
-
-            for l in self.decompose_mut().0 {
-                l.ready();
+            let (l, layers) = self.layers.split_first_mut().unwrap();
+            let mut input = l.output();
+            for l in layers {
+                l.eval(input, Mediator::new(&self.weights));
+                input = l.output();
             }
+            self.output()
         }
-    }
 
-    fn unready(&mut self) {
-        if self.decompose_mut().2.is_some() {
-            self.decompose_mut().2.take();
-
-            for l in self.decompose_mut().0 {
-                l.unready();
-            }
+        /// Get network output.
+        fn output(&self) -> &[f32s] {
+            self.layers.last().unwrap().output()
         }
-    }
 
-    fn calc_gradients(&mut self, output_gradients: &[f32]) -> Result<(), GradError> {
-        let (layers, weights, grads) = self.decompose_mut();
-        if let Some(grads) = grads {
-            let size = layers.last().unwrap().out_size();
-            as_scalar_mut(&mut grads.buffer1)[..size].copy_from_slice(output_gradients);
+        /// Get network weights.
+        fn weights(&self) -> &[f32s] {
+            &self.weights
+        }
 
-            let mut buffer1 = &mut grads.buffer1;
-            let mut buffer2 = &mut grads.buffer2;
+        /// Get mutable weights.
+        fn weights_mut(&mut self) -> &mut [f32s] {
+            &mut self.weights
+        }
 
-            let mut iter = layers.iter_mut().rev().peekable();
+        /// Returns input size of the network
+        fn in_size(&self) -> usize {
+            self.layers.first().unwrap().out_size()
+        }
 
-            while let Some(layer) = iter.next() {
-                if let Some(prev_layer) = iter.peek() {
-                    let in_size = prev_layer.actual_out();
-                    let out_size = layer.actual_out();
-                    let out_deriv = &mut buffer2[..in_size];
-                    let in_deriv = &mut buffer1[..out_size];
-                    zero_simd(out_deriv); //zero out space needed in the buffer
+        /// Return output size of the network
+        fn out_size(&self) -> usize {
+            self.layers.last().unwrap().out_size()
+        }
+    };
+}
 
-                    let inputs = prev_layer.output();
-
-                    layer
-                        .calculate_derivatives(
-                            Mediator::new(weights),
-                            Mediator::new(&mut grads.gradients),
-                            inputs,
-                            in_deriv,
-                            out_deriv,
-                        )
-                        .expect("Layer wasn't readied for gradient calculation");
-
-                    // swap the buffers without copying the contents as std::mem::swap does
-                    let temp = buffer1;
-                    buffer1 = buffer2;
-                    buffer2 = temp;
+macro_rules! calc_grads_impl {
+    () => {
+        fn ready(&mut self) {
+            if self.grads.is_none() {
+                self.grads = Some(Grads::new(&self.weights, &self.layers));
+                for l in &mut self.layers {
+                    l.ready();
                 }
             }
-            Ok(())
-        } else {
-            Err(GradError::new())
         }
-    }
 
-    fn gradients(&mut self) -> Result<&mut [f32s], ()> {
-        self.decompose_mut()
-            .2
-            .as_mut()
-            .map(|g| g.gradients.as_mut_slice())
-            .ok_or(())
-    }
+        fn unready(&mut self) {
+            if self.grads.is_some() {
+                self.grads.take();
+                for l in &mut self.layers {
+                    l.unready();
+                }
+            }
+        }
 
-    fn reset_gradients(&mut self) -> Result<(), GradError> {
-        self.decompose_mut()
-            .2
-            .as_mut()
-            .map(|g| zero_simd(&mut g.gradients))
-            .ok_or_else(GradError::new)
-    }
+        fn calc_gradients(&mut self, output_gradients: &[f32]) -> Result<(), GradError> {
+            if let Some(grads) = &mut self.grads {
+                let size = self.layers.last().unwrap().out_size();
+                as_scalar_mut(&mut grads.buffer1)[..size].copy_from_slice(output_gradients);
 
-    fn weight_grads_mut(&mut self) -> Option<(&mut [f32s], &mut [f32s])> {
-        let (_, weights, grads) = self.decompose_mut();
-        grads
-            .as_mut()
-            .map(|g| (weights, g.gradients.as_mut_slice()))
-    }
+                let mut buffer1 = &mut grads.buffer1;
+                let mut buffer2 = &mut grads.buffer2;
+
+                let mut iter = self.layers.iter_mut().rev().peekable();
+
+                while let Some(layer) = iter.next() {
+                    if let Some(prev_layer) = iter.peek() {
+                        let in_size = prev_layer.actual_out();
+                        let out_size = layer.actual_out();
+                        let out_deriv = &mut buffer2[..in_size];
+                        let in_deriv = &mut buffer1[..out_size];
+                        zero_simd(out_deriv); //zero out space needed in the buffer
+
+                        let inputs = prev_layer.output();
+
+                        layer
+                            .calc_gradients(
+                                Mediator::new(&self.weights),
+                                Mediator::new(&mut grads.gradients),
+                                inputs,
+                                in_deriv,
+                                out_deriv,
+                            )
+                            .expect("Layer wasn't readied for gradient calculation");
+
+                        // swap the buffers without copying the contents as std::mem::swap does
+                        let temp = buffer1;
+                        buffer1 = buffer2;
+                        buffer2 = temp;
+                    }
+                }
+                Ok(())
+            } else {
+                Err(GradError::new())
+            }
+        }
+
+        fn gradients(&self) -> Result<&[f32s], GradError> {
+            self.grads
+                .as_ref()
+                .map(|g| g.gradients.as_ref())
+                .ok_or_else(GradError::new)
+        }
+
+        fn gradients_mut(&mut self) -> Result<&mut [f32s], GradError> {
+            self.grads
+                .as_mut()
+                .map(|g| g.gradients.as_mut())
+                .ok_or_else(GradError::new)
+        }
+
+        fn reset_gradients(&mut self) -> Result<(), GradError> {
+            if let Some(grads) = &mut self.grads {
+                zero_simd(&mut grads.gradients);
+                Ok(())
+            } else {
+                Err(GradError::new())
+            }
+        }
+
+        fn weight_grads_mut(&mut self) -> Result<(&mut [f32s], &mut [f32s]), GradError> {
+            if let Some(grads) = &mut self.grads {
+                Ok((&mut self.weights, &mut grads.gradients))
+            } else {
+                Err(GradError::new())
+            }
+        }
+    };
+}
+
+impl<T: Layer + Clone> Network for FeedForward<T> {
+    feed_forward_impl!();
+}
+
+impl<T: Layer + Clone + LayerGradients> CalcGradients for FeedForward<T> {
+    calc_grads_impl!();
+}
+
+impl<T: Layer> Network for FeedForwardNoSer<T> {
+    feed_forward_impl!();
+}
+
+impl<T: Layer + LayerGradients> CalcGradients for FeedForwardNoSer<T> {
+    calc_grads_impl!();
 }
 
 impl<T: Layer + Clone> FeedForward<T>
@@ -256,28 +248,22 @@ impl<T: Layer + Clone> Into<NetworkUnvalidated<T>> for FeedForward<T> {
     }
 }
 
-#[derive(Clone)]
-pub struct Grads {
-    gradients: Vec<f32s>,
-    buffer1: Vec<f32s>,
-    buffer2: Vec<f32s>,
+impl<T: Layer + Clone> Clone for FeedForward<T> {
+    fn clone(&self) -> Self {
+        Self {
+            weights: self.weights.clone(),
+            layers: self.layers.clone(),
+            grads: self.grads.clone(),
+        }
+    }
 }
 
-impl Grads {
-    fn new<T: FeedForwardMarker_>(net: &T) -> Self {
-        let wc = net.weights().len();
-        let max = net
-            .decompose()
-            .0
-            .iter()
-            .map(|l| l.out_size())
-            .max()
-            .unwrap();
-
+impl<T: Layer + Clone> Clone for FeedForwardNoSer<T> {
+    fn clone(&self) -> Self {
         Self {
-            gradients: vec![f32s::splat(0.); wc],
-            buffer1: vec![f32s::splat(0.); max],
-            buffer2: vec![f32s::splat(0.); max],
+            weights: self.weights.clone(),
+            layers: self.layers.clone(),
+            grads: self.grads.clone(),
         }
     }
 }
