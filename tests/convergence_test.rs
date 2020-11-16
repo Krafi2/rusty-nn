@@ -4,7 +4,7 @@ use rusty_nn::layers::{BasicLayer, DenseBuilder, InputBuilder};
 use rusty_nn::loss_funcs::SquaredError;
 use rusty_nn::network::{FeedForward, LinearBuilder};
 use rusty_nn::optimizer::{Adam, GradientDescent, OptimizerBase};
-use rusty_nn::trainer::trainer_from_tuples;
+use rusty_nn::trainer::Stochaistic;
 
 use anyhow;
 
@@ -28,7 +28,7 @@ fn sigmoid_convergence() -> anyhow::Result<()> {
     let optimizer =
         OptimizerBase::<SquaredError, _, _>::new(network, GradientDescent::builder(learning_rate));
 
-    let trainer = trainer_from_tuples(data, epochs, batch_size, optimizer).unwrap();
+    let trainer = Stochaistic::from_tuples(data, epochs, batch_size, optimizer).unwrap();
     let loss = trainer.last().unwrap();
     assert!(loss < 0.0001);
     Ok(())
@@ -40,7 +40,6 @@ fn sqrt_convergence() -> anyhow::Result<()> {
     let network = LinearBuilder::<BasicLayer, FeedForward<_>>::new()
         .add_layer(InputBuilder::new(1))
         .add_layer(DenseBuilder::<Sigmoid, _>::new(&mut init, 5, true, true))
-        // .add(DenseBuilder::<Sigmoid, _>::new(&mut init, 5, true, true))
         .add_layer(DenseBuilder::<Identity, _>::new(&mut init, 1, true, true))
         .build()
         .unwrap();
@@ -58,7 +57,7 @@ fn sqrt_convergence() -> anyhow::Result<()> {
         network,
         Adam::builder(0.9, 0.999, 0.1, learning_rate),
     );
-    let mut trainer = trainer_from_tuples(data, epoch_count, batch_size, optimizer).unwrap();
+    let mut trainer = Stochaistic::from_tuples(data, epoch_count, batch_size, optimizer).unwrap();
 
     let loss = (&mut trainer).last().unwrap();
     assert!(loss < 0.001, "Failed to converge, loss was {}", loss);

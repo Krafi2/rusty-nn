@@ -9,7 +9,7 @@ use rusty_nn::layers::{BasicLayer, DenseBuilder, InputBuilder};
 use rusty_nn::loss_funcs::SquaredError;
 use rusty_nn::network::{FeedForward, LinearBuilder};
 use rusty_nn::optimizer::{GradientDescent, OptimizerBase};
-use rusty_nn::trainer::trainer_from_tuples;
+use rusty_nn::trainer::Stochaistic;
 
 #[bench]
 fn training_speed(b: &mut Bencher) {
@@ -40,7 +40,7 @@ fn training_speed(b: &mut Bencher) {
 
     let optimizer =
         OptimizerBase::<SquaredError, _, _>::new(network, GradientDescent::builder(learning_rate));
-    let mut trainer = trainer_from_tuples(t_data, epoch_count, batch_size, optimizer).unwrap();
+    let mut trainer = Stochaistic::from_tuples(t_data, epoch_count, batch_size, optimizer).unwrap();
 
     b.iter(move || trainer.do_epoch())
 }
