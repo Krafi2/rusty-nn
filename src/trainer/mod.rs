@@ -123,27 +123,6 @@ impl<T: Processor> DerefMut for StochaisticTrainer<T> {
     }
 }
 
-pub trait AsFloat {
-    fn as_float(self) -> f32;
-}
-
-impl AsFloat for f32 {
-    fn as_float(self) -> f32 {
-        self
-    }
-}
-
-impl AsFloat for &f32 {
-    fn as_float(self) -> f32 {
-        *self
-    }
-}
-
-impl AsFloat for &mut f32 {
-    fn as_float(self) -> f32 {
-        *self
-    }
-}
 
 /// This is a helper method that constructs a trainer from the supplied arguments.
 /// Returns None if the data vectors arent compatible with the optimizer.
