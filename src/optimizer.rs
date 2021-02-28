@@ -8,10 +8,10 @@ use std::ops::{Deref, DerefMut};
 
 pub trait Optimizer {
     /// Process the provided data and label
-    fn process(&mut self, data: &[f32], label: &[f32]) -> f32;
+    fn process(&mut self, input: &[f32], target: &[f32]) -> f32;
 
     /// Calculate gradient based on only a single target value. `index` is the index of the value to target.
-    fn process_partial(&mut self, data: &[f32], index: usize) -> f32;
+    fn process_partial(&mut self, input: &[f32], index: usize, target: f32) -> f32;
 
     /// Update model weights based on collected data.
     fn update_model(&mut self);
@@ -44,28 +44,24 @@ impl<O: OptimizerAlg, N: CalcGradients, F: LossFunc> OptimizerBase<F, O, N> {
 
 impl<O: OptimizerAlg, N: CalcGradients, F: LossFunc> Optimizer for OptimizerBase<F, O, N> {
     /// Process pairs of input and output values laid out as [inputs, outputs]
-    fn process(&mut self, data: &[f32], label: &[f32]) -> f32 {
-        self.network.predict(data);
+    fn process(&mut self, input: &[f32], target: &[f32]) -> f32 {
+        self.network.predict(input);
         let mut grads = vec![0f32; self.network.out_size()];
         F::gradients(
             &as_scalar(self.network.output())[..self.network.out_size()],
-            label,
+            target,
             &mut grads,
         );
 
         self.network.calc_gradients(&grads).unwrap();
         self.n += 1;
         let size = self.network.out_size();
-        F::loss(&self.network.output().as_scalar()[..size], label)
+        F::loss(&self.network.output().as_scalar()[..size], target)
     }
 
     /// Calculate gradient based on only a single target value. `index` is the index of the value to target.
-    fn process_partial(&mut self, data: &[f32], index: usize) -> f32 {
-        let input_size = self.network.in_size();
-        let input = &data[..input_size]; //extract the part of data that contains the inputs
+    fn process_partial(&mut self, input: &[f32], index: usize, target: f32) -> f32 {
         self.network.predict(input);
-
-        let target = data[input_size];
         let out = as_scalar(self.network.output())[index];
         let deriv = F::deriv(out, target);
 
