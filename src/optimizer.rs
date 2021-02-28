@@ -4,7 +4,7 @@ use crate::helpers::AsScalarExt;
 use crate::loss_funcs::LossFunc;
 use crate::network::CalcGradients;
 
-use std::ops::{Deref, DerefMut};
+use std::{marker::PhantomData, ops::{Deref, DerefMut}};
 
 pub trait Optimizer {
     /// Process the provided data and label
@@ -111,6 +111,22 @@ impl<O: OptimizerAlg, N: CalcGradients, F: LossFunc> Deref for OptimizerBase<F, 
 impl<O: OptimizerAlg, N: CalcGradients, F: LossFunc> DerefMut for OptimizerBase<F, O, N> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.network
+    }
+}
+
+impl<O: OptimizerAlg, N: CalcGradients, F: LossFunc> Clone for OptimizerBase<F, O, N>
+where
+    O: Clone,
+    N: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            optimizer: self.optimizer.clone(),
+            network: self.network.clone(),
+            marker_: PhantomData,
+            n: self.n,
+            
+        }
     }
 }
 
