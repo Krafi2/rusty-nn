@@ -146,6 +146,7 @@ pub trait OptimizerAlg {
 }
 
 /// Gradient descent simply steps the weights based on their derivatives.
+#[derive(Clone, Debug)]
 pub struct GradientDescent {
     l_rate: f32,
 }
@@ -169,6 +170,7 @@ impl GradientDescent {
 }
 
 /// Constructor for [GradientDescent](self::GradientDescent)
+#[derive(Clone, Debug)]
 pub struct GradDescBuilder {
     l_rate: f32,
 }
@@ -184,6 +186,7 @@ impl OptimizerBuilder for GradDescBuilder {
 }
 
 /// The adam optimizer algorithm as shown in the research paper <https://arxiv.org/abs/1412.6980>
+#[derive(Clone, Debug)]
 pub struct Adam {
     momentum: Vec<f32s>,
     velocity: Vec<f32s>,
@@ -238,6 +241,7 @@ impl Adam {
 }
 
 /// Constructor for [Adam](self::Adam)
+#[derive(Clone, Debug)]
 pub struct AdamBuilder {
     beta1: f32,
     beta2: f32,
