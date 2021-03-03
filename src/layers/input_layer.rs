@@ -6,7 +6,7 @@ use crate::helpers::{as_scalar_mut, empty_vec_simd, least_size};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct InputLayer {
     size: usize,
     actual_size: usize,

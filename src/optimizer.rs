@@ -23,6 +23,7 @@ pub trait Optimizer {
     fn out_size(&self) -> usize;
 }
 
+#[derive(Debug)]
 pub struct OptimizerBase<F: LossFunc, O: OptimizerAlg, N: CalcGradients> {
     optimizer: O,
     network: N,
@@ -75,18 +76,23 @@ impl<O: OptimizerAlg, N: CalcGradients, F: LossFunc> Optimizer for OptimizerBase
 
     /// Update model weights based on collected data.
     fn update_model(&mut self) {
-        let (weights, gradients) = self.network.weight_grads_mut().unwrap();
-
-        // We have to average the gradients
-        let avg = f32s::splat(1. / self.n as f32);
-        for i in gradients.iter_mut() {
-            *i *= avg;
+        if self.n == 0 {
+            eprintln!("Attempted to update the model without processing any gradients.")
         }
+        else {
+            let (weights, gradients) = self.network.weight_grads_mut().unwrap();
 
-        self.optimizer.update_weights(weights, gradients);
-        self.network.reset_gradients().unwrap();
-
-        self.n = 0;
+            // We have to average the gradients
+            let avg = f32s::splat(1. / self.n as f32);
+            for i in gradients.iter_mut() {
+                *i *= avg;
+            }
+            
+            self.optimizer.update_weights(weights, gradients);
+            self.network.reset_gradients().unwrap();
+            
+            self.n = 0;
+        }
     }
 
     /// Get input size of the network.
@@ -211,7 +217,7 @@ impl OptimizerAlg for Adam {
             *m = self.beta1 * *m + (1. - self.beta1) * *g;
         }
 
-        for (v, g) in self.momentum.iter_mut().zip(gradients.iter()) {
+        for (v, g) in self.velocity.iter_mut().zip(gradients.iter()) {
             *v = self.beta2 * *v + (1. - self.beta2) * *g * *g;
         }
 

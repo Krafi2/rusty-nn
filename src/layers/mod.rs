@@ -113,7 +113,7 @@ pub struct OutShape {
 /// in the BasicLayer enum to fully describe a layer.
 #[enum_dispatch(Layer)]
 #[enum_dispatch(LayerGradients)]
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum LayerArch<T: ActivFunc> {
     DenseLayer(DenseLayer<T>),
     InputLayer(InputLayer),
@@ -124,7 +124,7 @@ pub enum LayerArch<T: ActivFunc> {
 /// so it can be easily serialized and deserialized.
 #[enum_dispatch(Layer)]
 #[enum_dispatch(LayerGradients)]
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum BasicLayer {
     Sigmoid(LayerArch<Sigmoid>),
     Identity(LayerArch<Identity>),

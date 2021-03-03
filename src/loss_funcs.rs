@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 pub trait LossFunc {
     /// Calculate the loss on a single target-value pair.
     fn eval(val: f32, target: f32) -> f32;
@@ -24,7 +26,15 @@ pub trait LossFunc {
     }
 }
 
+#[derive(Clone)]
 pub struct SquaredError;
+
+impl Debug for SquaredError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SquaredError")
+    }
+}
+
 impl LossFunc for SquaredError {
     fn eval(val: f32, target: f32) -> f32 {
         let diff = target - val;
@@ -35,13 +45,21 @@ impl LossFunc for SquaredError {
     }
 }
 
+#[derive(Clone)]
 pub struct PolarError;
+
+impl Debug for PolarError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PolarError")
+    }
+}
+
 impl LossFunc for PolarError {
     fn eval(val: f32, target: f32) -> f32 {
         let diff = target - val;
         diff * diff + 1. / (val * val + 1.)
     }
-
+    
     fn deriv(val: f32, target: f32) -> f32 {
         let x = val * val + 1.;
         2. * (val * (1. - 1. / (x * x) - target))

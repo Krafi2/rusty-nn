@@ -22,7 +22,7 @@ pub trait ActivFunc {
     fn derivative(inp: f32, out: f32) -> f32;
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Sigmoid;
 impl ActivFunc for Sigmoid {
     fn evaluate(x: f32) -> f32 {
@@ -33,7 +33,7 @@ impl ActivFunc for Sigmoid {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Identity;
 impl ActivFunc for Identity {
     fn evaluate(x: f32) -> f32 {
@@ -44,7 +44,7 @@ impl ActivFunc for Identity {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct TanH;
 impl ActivFunc for TanH {
     fn evaluate(x: f32) -> f32 {
@@ -55,7 +55,7 @@ impl ActivFunc for TanH {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SiLU;
 impl ActivFunc for SiLU {
     fn evaluate(x: f32) -> f32 {
@@ -67,7 +67,7 @@ impl ActivFunc for SiLU {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ReLU;
 impl ActivFunc for ReLU {
     fn evaluate(x: f32) -> f32 {
@@ -82,7 +82,7 @@ impl ActivFunc for ReLU {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 /// This activation function is used for testing as it transforms its output in a straightforward way
 /// which makes it easy to check the validity of the outputs
 pub struct Test;
