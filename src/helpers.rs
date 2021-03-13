@@ -1,7 +1,38 @@
 use crate::{f32s, mask_s, usize_s};
 use rand::{rngs::SmallRng, seq::SliceRandom, SeedableRng};
+use std::mem::{ManuallyDrop, MaybeUninit};
 
-use std::mem::MaybeUninit;
+pub struct VectorAdapter<I> {
+    iter: I,
+}
+
+impl<I> VectorAdapter<I>
+where
+    I: Iterator<Item = f32>,
+{
+    pub fn new(iter: I) -> Self {
+        Self { iter }
+    }
+}
+
+impl<I> Iterator for VectorAdapter<I>
+where
+    I: Iterator<Item = f32>,
+{
+    type Item = f32s;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut array = [0.; f32s::lanes()];
+        for i in &mut array {
+            if let Some(f) = self.iter.next() {
+                *i = f
+            } else {
+                return None;
+            }
+        }
+        Some(f32s::from_slice_unaligned(&array))
+    }
+}
 
 ///Shuffles an array of consequtive integers and allows yout to iterate through them
 pub struct IndexShuffler {
@@ -24,6 +55,7 @@ impl IndexShuffler {
         self.idx = 0;
     }
 }
+
 impl Iterator for IndexShuffler {
     type Item = usize;
     fn next(&mut self) -> Option<Self::Item> {
@@ -33,24 +65,44 @@ impl Iterator for IndexShuffler {
     }
 }
 
-/// Overwrites the contents of a slice to zeros
-pub fn zero(slice: &mut [f32]) {
-    slice.iter_mut().for_each(|f| *f = 0.);
+pub struct IterMask<T> {
+    iter: T,
+    len: usize,
+    total: usize,
+    n: usize,
 }
 
-pub fn zero_simd(slice: &mut [f32s]) {
-    let zero = f32s::splat(0.);
-    slice.iter_mut().for_each(|f| *f = zero);
+impl<T> IterMask<T> {
+    pub fn new(iter: T, len: usize, total: usize) -> Self {
+        Self {
+            iter,
+            len,
+            total,
+            n: 0,
+        }
+    }
 }
 
-pub fn empty_slice() -> Box<[f32]> {
-    vec![0f32; 0].into_boxed_slice()
-}
-pub fn empty_vec_simd() -> Vec<f32s> {
-    Vec::new()
-}
-pub fn empty_vec() -> Vec<f32> {
-    Vec::new()
+impl<T> Iterator for IterMask<T>
+where
+    T: Iterator,
+    T::Item: Default,
+{
+    type Item = T::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.n >= self.total {
+            self.n = 0;
+        }
+
+        let output = if self.n < self.len {
+            self.iter.next()
+        } else {
+            Some(Default::default())
+        };
+        self.n += 1;
+        output
+    }
 }
 
 pub fn splat_n(n: usize, val: f32) -> Vec<f32s> {
@@ -59,8 +111,8 @@ pub fn splat_n(n: usize, val: f32) -> Vec<f32s> {
 
 /// Compute the smallest amount of blocks of size `size` needed to fit n elements.
 /// For example if we have 7 floats and we want to fit them into f32x4, we would need 2 f32x4s
-pub fn least_size(n: usize, size: usize) -> usize {
-    (n - 1) / size + 1
+pub fn to_blocks(n: usize, block: usize) -> usize {
+    (n - 1) / block + 1
 }
 
 //should be safe because the simd is *packed*
@@ -75,6 +127,18 @@ pub fn as_scalar(arr: &[f32s]) -> &[f32] {
 pub fn as_scalar_mut(arr: &mut [f32s]) -> &mut [f32] {
     let ptr = arr.as_mut_ptr() as *mut f32;
     unsafe { std::slice::from_raw_parts_mut(ptr, arr.len() * f32s::lanes()) }
+}
+
+#[inline]
+/// Converts a boxed slice of f32s into a boxed slice of f32s.
+pub fn into_scalar(arr: Box<[f32s]>) -> Box<[f32]> {
+    // unsafe {
+    //     let arr = ManuallyDrop::new(arr);
+    //     // The alignment isn't the same, however we don't allocate or deallocate anything so we should be fine
+    //     let arr = Vec::<f32>::from_raw_parts(arr.as_mut_ptr(), arr.len() * f32s::lanes(), arr.len() * f32s::lanes());
+    //     arr.into_boxed_slice()
+    // }
+    as_scalar(&arr).to_owned().into_boxed_slice()
 }
 
 /// This trait provides the [as_scalar](self::as_scalar) and [as_scalar_mut](self::as_scalar_mut)

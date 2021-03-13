@@ -1,29 +1,31 @@
-use rusty_nn::a_funcs::{Identity, Sigmoid};
-use rusty_nn::helpers::{as_scalar, AsScalarExt};
-use rusty_nn::initializer::XavierInit;
-use rusty_nn::layers::{BasicLayer, DenseBuilder, InputBuilder, NormBuilder};
-use rusty_nn::network::{FeedForward, LinearBuilder, Network};
+use rusty_nn::{
+    a_funcs::{Identity, Sigmoid},
+    initializer::{Normal, Ones, Xavier},
+    layers::{BasicLayer, DenseBuilder, MapBuilder},
+    network::{FeedForward, LinearBuilder, Network},
+};
+use serde::de::value;
+use serde_json::{from_reader, to_value};
 
 #[test]
-fn save_and_load() {
-    let mut init = XavierInit::new();
-    let mut network = LinearBuilder::<BasicLayer, FeedForward<_>>::new()
-        .add_layer(InputBuilder::new(3))
-        .add_layer(DenseBuilder::<Sigmoid, _>::new(&mut init, 5, true, true))
-        .add_layer(NormBuilder::<Identity, _>::new(&mut init))
-        .build()
+fn save_and_load() -> anyhow::Result<()> {
+    let mut network = LinearBuilder::new(3)
+        .layer(DenseBuilder::<Sigmoid>::new(Xavier::new(), 5, true, true))
+        .layer(MapBuilder::<Identity>::new(Ones))
+        .build::<FeedForward>()
+        .unwrap()
         .unwrap();
 
+    let ser = serde_json::to_string(&network)?;
+    let mut loaded: FeedForward = serde_json::from_str(&ser)?;
+
     let input = [1., 2., 3.];
+    let correct = network.predict(&input).as_scalar();
+    let prediction = loaded.predict(&input).as_scalar();
 
-    network.predict(&input);
-    let prediction = as_scalar(network.output());
-    let str = serde_json::to_string(&network).expect("Serialization failed");
-    let mut network: FeedForward<BasicLayer> =
-        serde_json::from_str(&str).expect("Derserialization failed");
-
-    assert!(
-        network.predict(&input).as_scalar() == prediction,
+    assert_eq!(
+        correct, prediction,
         "Network structure damaged during saving."
     );
+    Ok(())
 }

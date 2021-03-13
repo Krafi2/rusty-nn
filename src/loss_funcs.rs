@@ -59,7 +59,7 @@ impl LossFunc for PolarError {
         let diff = target - val;
         diff * diff + 1. / (val * val + 1.)
     }
-    
+
     fn deriv(val: f32, target: f32) -> f32 {
         let x = val * val + 1.;
         2. * (val * (1. - 1. / (x * x) - target))

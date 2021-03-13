@@ -1,46 +1,44 @@
 #![feature(test)]
-
 extern crate test;
 use test::Bencher;
 
-use rusty_nn::a_funcs::Sigmoid;
-use rusty_nn::initializer::XavierInit;
-use rusty_nn::layers::{BasicLayer, DenseBuilder, InputBuilder};
-use rusty_nn::loss_funcs::SquaredError;
-use rusty_nn::network::{FeedForward, LinearBuilder};
-use rusty_nn::optimizer::{GradientDescent, OptimizerBase};
-use rusty_nn::trainer::Stochaistic;
+use rusty_nn::{
+    a_funcs::Sigmoid,
+    initializer::Xavier,
+    layers::{BasicLayer, DenseBuilder},
+    loss_funcs::SquaredError,
+    network::{FeedForward, LinearBuilder},
+    optimizer::{GradientDescent, OptimizerBase},
+    trainer::Stochaistic,
+};
 
-#[bench]
-fn training_speed(b: &mut Bencher) {
-    let batch_size = 100;
-    let epoch_count = 1;
-    let learning_rate = 0.1;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test::Bencher;
 
-    let t_data = vec![([0.], [0.]); 100];
+    #[bench]
+    fn training_speed(b: &mut Bencher) {
+        let batch_size = 100;
+        let epoch_count = 1;
+        let learning_rate = 0.1;
 
-    let mut xavier = XavierInit::new();
-    let network = LinearBuilder::<BasicLayer, FeedForward<_>>::new()
-        .add_layer(InputBuilder::new(1))
-        .add_layer(DenseBuilder::<Sigmoid, _>::new(
-            &mut xavier,
-            100,
-            true,
-            true,
-        ))
-        .add_layer(DenseBuilder::<Sigmoid, _>::new(
-            &mut xavier,
-            100,
-            true,
-            true,
-        ))
-        .add_layer(DenseBuilder::<Sigmoid, _>::new(&mut xavier, 1, true, true))
-        .build()
-        .unwrap();
+        let t_data = vec![([0.], [0.]); 100];
 
-    let optimizer =
-        OptimizerBase::<SquaredError, _, _>::new(network, GradientDescent::builder(learning_rate));
-    let mut trainer = Stochaistic::from_tuples(t_data, epoch_count, batch_size, optimizer).unwrap();
+        let network = LinearBuilder::new(1)
+            .layer(DenseBuilder::<Sigmoid>::new(Xavier::new(), 100, true, true))
+            .layer(DenseBuilder::<Sigmoid>::new(Xavier::new(), 100, true, true))
+            .layer(DenseBuilder::<Sigmoid>::new(Xavier::new(), 1, true, true))
+            .build::<FeedForward>()
+            .unwrap();
 
-    b.iter(move || trainer.do_epoch())
+        let optimizer = OptimizerBase::<SquaredError, _, _>::new(
+            network,
+            GradientDescent::builder(learning_rate),
+        );
+        let mut trainer =
+            Stochaistic::from_tuples(t_data, epoch_count, batch_size, optimizer).unwrap();
+
+        b.iter(move || trainer.do_epoch())
+    }
 }

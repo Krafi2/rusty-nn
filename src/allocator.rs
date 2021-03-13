@@ -1,218 +1,302 @@
-use crate::f32s;
+use crate::{
+    f32s,
+    helpers::{as_scalar, as_scalar_mut},
+    initializer::Initializer,
+    serde::boxed_simd,
+};
 
 use serde::{Deserialize, Serialize};
 
-use std::fmt::Debug;
-use std::ops::{Deref, DerefMut, Index, IndexMut, Range};
-use std::slice::{from_raw_parts, from_raw_parts_mut};
+use std::{
+    collections::HashSet,
+    fmt::Debug,
+    marker::PhantomData,
+    ops::{Deref, DerefMut, Index, IndexMut},
+    slice::{from_raw_parts, from_raw_parts_mut},
+    sync::atomic::{AtomicU32, Ordering},
+};
 
-pub type WeightMediator<'a, T> = Mediator<'a, T, WeightHndl>;
-pub type GradMediator<'a, T> = Mediator<'a, T, GradHdnl>;
+pub type WeightStorage = Storage;
+pub type GradStorage = Storage;
+pub type WeightHndl = Handle;
+pub type GradHndl = Handle;
+pub type WeightAllocator = Allocator;
+pub type GradAllocator = Allocator;
 
-/// This is the maximum extent of privacy Rust allows me to use so please just dont ever use this module
-mod private {
+pub use aligned_ref::{AlignedRef, AlignedRefMut};
+mod aligned_ref {
     use super::*;
-    pub trait SealedHandle {
-        fn new(handle: Range<usize>) -> Self;
-        fn range(&self) -> &Range<usize>;
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct AlignedRef<'a> {
+        slice: &'a [f32s],
+    }
+
+    impl<'a> AlignedRef<'a> {
+        pub fn new(slice: &'a [f32s]) -> Self {
+            Self { slice }
+        }
+
+        pub fn as_scalar(&self) -> &[f32] {
+            as_scalar(self.slice)
+        }
+
+        pub fn as_vector(&self) -> &[f32s] {
+            self.slice
+        }
+    }
+
+    impl<'a> AsRef<[f32]> for AlignedRef<'a> {
+        fn as_ref(&self) -> &[f32] {
+            self.as_scalar()
+        }
+    }
+
+    impl<'a> AsRef<[f32s]> for AlignedRef<'a> {
+        fn as_ref(&self) -> &[f32s] {
+            self.as_vector()
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct AlignedRefMut<'a> {
+        slice: &'a mut [f32s],
+    }
+
+    impl<'a> AlignedRefMut<'a> {
+        pub fn new(slice: &'a mut [f32s]) -> Self {
+            Self { slice }
+        }
+
+        pub fn as_scalar(&self) -> &[f32] {
+            as_scalar(self.slice)
+        }
+
+        pub fn as_vector(&self) -> &[f32s] {
+            self.slice
+        }
+
+        pub fn as_scalar_mut(&mut self) -> &mut [f32] {
+            as_scalar_mut(self.slice)
+        }
+
+        pub fn as_vector_mut(&mut self) -> &mut [f32s] {
+            self.slice
+        }
+    }
+
+    impl<'a> AsRef<[f32]> for AlignedRefMut<'a> {
+        fn as_ref(&self) -> &[f32] {
+            self.as_scalar()
+        }
+    }
+
+    impl<'a> AsRef<[f32s]> for AlignedRefMut<'a> {
+        fn as_ref(&self) -> &[f32s] {
+            self.as_vector()
+        }
+    }
+
+    impl<'a> AsMut<[f32]> for AlignedRefMut<'a> {
+        fn as_mut(&mut self) -> &mut [f32] {
+            self.as_scalar_mut()
+        }
+    }
+
+    impl<'a> AsMut<[f32s]> for AlignedRefMut<'a> {
+        fn as_mut(&mut self) -> &mut [f32s] {
+            self.as_vector_mut()
+        }
     }
 }
-use private::SealedHandle;
 
-/// A public marker trait for structs implementing SealedHandle
-pub trait Handle: SealedHandle {}
-impl<T: SealedHandle> Handle for T {}
+pub use handle::Handle;
+mod handle {
+    use super::*;
 
-/// Create a new  handle struct called $name
-macro_rules! handle {
-    ($name:ident) => {
-        #[derive(Serialize, Deserialize, Debug)]
-        pub struct $name {
-            range: Range<usize>,
+    /// Generic handle for accesing blocks of memory stored within the matching Storage
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    pub struct Handle {
+        start: usize,
+        end: usize,
+    }
+
+    impl Handle {
+        pub(super) fn new(start: usize, end: usize) -> Self {
+            Self { start, end }
         }
-        impl $name {
-            /// Clones the handle.
-            /// This function is unsafe because cloning the handle can allow you to obtain
-            /// multiple references to the same data from the Mediator.
-            /// As such it is the user's responsibility to make sure that a Mediator is accessed
-            /// in accordance to the borrowing rules.
-            pub unsafe fn clone(&self) -> Self {
-                Self::new(self.range().clone())
+
+        pub(super) fn start(&self) -> usize {
+            self.start
+        }
+
+        pub(super) fn end(&self) -> usize {
+            self.end
+        }
+    }
+}
+
+pub use allocator::Allocator;
+mod allocator {
+    use super::*;
+
+    #[derive(Debug, Clone)]
+    pub struct Allocator {
+        mem: Vec<f32s>,
+        buffered: usize,
+    }
+
+    impl Allocator {
+        pub fn new() -> Self {
+            Self {
+                mem: Vec::new(),
+                buffered: 0,
             }
         }
 
-        impl SealedHandle for $name {
-            /// Create a new handle from a range in the data block
-            fn new(range: Range<usize>) -> Self {
-                Self { range }
+        fn new_handle(&self, len: usize) -> Handle {
+            let start = self.mem.len() + self.buffered;
+            Handle::new(start, start + len)
+        }
+
+        fn allocate_buffered(&mut self) {
+            if self.buffered > 0 {
+                self.mem
+                    .extend(std::iter::repeat(f32s::splat(0.)).take(self.buffered));
+                self.buffered = 0;
+            }
+        }
+
+        pub fn allocate_zeroed(&mut self, len: usize) -> Handle {
+            let handle = self.new_handle(len);
+            self.buffered += len;
+            handle
+        }
+
+        pub fn allocate<I>(&mut self, len: usize, iter: I) -> Handle
+        where
+            I: Iterator<Item = f32s>,
+        {
+            self.allocate_buffered();
+            let len_before = self.mem.len();
+            let handle = self.new_handle(len);
+            self.mem.extend(iter.take(len));
+            let received = self.mem.len() - len_before;
+            assert_eq!(
+                len, received,
+                "Provided iterator did not yield enough elements. Expected: {}, Received: {}",
+                len, received
+            );
+            handle
+        }
+
+        pub fn finish(mut self) -> Storage {
+            self.allocate_buffered();
+            let storage = self.mem.into_boxed_slice();
+            Storage::new(storage)
+        }
+    }
+}
+
+pub use storage::Storage;
+mod storage {
+    use super::*;
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct Storage {
+        #[serde(with = "boxed_simd")]
+        storage: Box<[f32s]>,
+    }
+
+    impl Storage {
+        pub(super) fn new(storage: Box<[f32s]>) -> Self {
+            Self { storage }
+        }
+
+        pub fn get<'a>(&'a self, handle: Handle) -> AlignedRef<'a> {
+            AlignedRef::new(&self.storage[handle.start()..handle.end()])
+        }
+
+        pub fn get_mut<'a>(&'a mut self, handle: Handle) -> AlignedRefMut<'a> {
+            AlignedRefMut::new(&mut self.storage[handle.start()..handle.end()])
+        }
+
+        pub fn get_multiple_mut<'a>(
+            &'a mut self,
+            handles: &[Handle],
+        ) -> Option<Vec<AlignedRefMut<'a>>> {
+            let mut vec = Vec::with_capacity(handles.len() * 2);
+            for (i, handle) in handles.iter().enumerate() {
+                vec.push((handle.start(), i));
+                vec.push((handle.end(), i));
+            }
+            vec.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+            for chunk in vec.chunks_exact(2) {
+                let (_, i1) = chunk[0];
+                let (_, i2) = chunk[1];
+                if i1 != i2 {
+                    return None;
+                }
             }
 
-            /// Obtain the handle's internal range
-            fn range(&self) -> &Range<usize> {
-                &self.range
+            Some(
+                handles
+                    .iter()
+                    .map(|handle| unsafe {
+                        let ptr = self.storage.as_mut_ptr().add(handle.start());
+                        let len = handle.end() - handle.start();
+                        let slice = from_raw_parts_mut(ptr, len);
+                        AlignedRefMut::new(slice)
+                    })
+                    .collect(),
+            )
+        }
+
+        /// Get a reference to the raw contents of the storage
+        pub fn raw(&self) -> &[f32s] {
+            &self.storage
+        }
+
+        /// Get a mutable reference to the raw contents of the storage
+        pub fn raw_mut(&mut self) -> &mut [f32s] {
+            &mut self.storage
+        }
+    }
+}
+
+pub use weight_allocator::DualAllocator;
+mod weight_allocator {
+    use super::*;
+
+    pub struct DualAllocator {
+        weights: Allocator,
+        grads: Allocator,
+    }
+
+    impl DualAllocator {
+        pub fn new() -> Self {
+            Self {
+                weights: Allocator::new(),
+                grads: Allocator::new(),
             }
         }
-    };
-}
 
-handle!(WeightHndl);
-handle!(GradHdnl);
-
-/// This struct mediates access to its underlying data through the use of handles specified by the H parameter.
-pub struct Mediator<'a, T: 'a, H: Handle> {
-    arr: T,
-    _marker: std::marker::PhantomData<&'a H>,
-}
-
-impl<'a, T: 'a, H: Handle> Mediator<'a, T, H> {
-    /// Construct a new Mediator object from a data array
-    pub fn new(arr: T) -> Mediator<'a, T, H> {
-        Mediator {
-            arr,
-            _marker: std::marker::PhantomData,
+        pub fn allocate_zeroed(&mut self, len: usize) -> Handle {
+            self.weights.allocate_zeroed(len);
+            self.grads.allocate_zeroed(len)
         }
-    }
-}
 
-impl<'a, T: 'a, U: 'a, H> Mediator<'a, T, H>
-where
-    H: Handle,
-    T: Deref<Target = U>,
-    U: Index<Range<usize>>,
-    U: ?Sized,
-{
-    #[inline]
-    /// Get the concrete reference to the data held by the handle
-    pub fn get<'b, E>(&self, handle: &'b H) -> Handled<&'b H, &'b [E]>
-    where
-        T: AsRef<[E]>,
-    {
-        let range = handle.range();
-        unsafe {
-            return Handled {
-                handle,
-                slice: from_raw_parts(
-                    self.arr.as_ref().as_ptr().add(range.start),
-                    range.end - range.start,
-                ),
-            };
+        pub fn allocate<I>(&mut self, len: usize, iter: I) -> Handle
+        where
+            I: Iterator<Item = f32s>,
+        {
+            self.weights.allocate(len, iter);
+            self.grads.allocate_zeroed(len)
         }
-    }
-}
 
-impl<'a, T: 'a, H, U: 'a> Mediator<'a, T, H>
-where
-    H: Handle,
-    T: DerefMut<Target = U>,
-    U: IndexMut<Range<usize>>,
-    U: ?Sized,
-{
-    #[inline]
-    /// Get the concrete mutable reference to the data held by the handle
-    pub fn get_mut<'b, E>(&mut self, handle: &'b mut H) -> Handled<&'b mut H, &'b mut [E]>
-    where
-        T: AsMut<[E]>,
-    {
-        let range = handle.range().clone();
-        unsafe {
-            return Handled {
-                handle,
-                slice: from_raw_parts_mut(
-                    self.arr.as_mut().as_mut_ptr().add(range.start),
-                    range.end - range.start,
-                ),
-            };
+        pub fn finish(self) -> (WeightStorage, GradAllocator) {
+            (self.weights.finish(), self.grads)
         }
-    }
-}
-
-/// Struct for allocating space in vector
-pub struct Allocator<'a>(&'a mut Vec<f32s>);
-impl<'a> Allocator<'a> {
-    /// Allocates n elements initialized to 0
-    pub fn allocate(&mut self, n: usize) -> (WeightHndl, GradHdnl) {
-        let range = self.0.len()..self.0.len() + n;
-        self.0.extend(std::iter::repeat(f32s::splat(0.)).take(n));
-        (WeightHndl::new(range.clone()), GradHdnl::new(range))
-    }
-    /// Allocates n elements by calling init to get their value
-    pub fn allocate_with<F: FnMut() -> f32>(
-        &mut self,
-        n: usize,
-        mut init: F,
-    ) -> (WeightHndl, GradHdnl) {
-        let range = self.0.len()..self.0.len() + n;
-        self.0.reserve(n);
-
-        unsafe {
-            let ptr = self.0.as_mut_ptr().add(self.0.len()) as *mut f32;
-            for i in 0..n * f32s::lanes() {
-                let val = init();
-                ptr.add(i).write(val)
-            }
-            self.0.set_len(self.0.len() + n);
-        }
-        (WeightHndl::new(range.clone()), GradHdnl::new(range))
-    }
-    pub fn new(vec: &'a mut Vec<f32s>) -> Self {
-        Allocator(vec)
-    }
-}
-
-/// Constructs a new handle which has no effect used and returns an empty slice.
-pub fn invalid_handle<T: Handle>() -> T {
-    T::new(0..0)
-}
-
-/// Struct containing a slice and a handle so that the compiler enforces borrowing rules for us and our code is sound.
-pub struct Handled<H, T> {
-    #[allow(dead_code)]
-    handle: H, //we need to keep the handle in order for the compiler to enforce borrowing rules
-    slice: T,
-}
-
-impl<H, T: Deref> Deref for Handled<H, T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        &self.slice
-    }
-}
-
-impl<H, T: DerefMut> DerefMut for Handled<H, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.slice
-    }
-}
-
-impl<H, T: Debug> Debug for Handled<H, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.slice.fmt(f)
-    }
-}
-
-impl<H, T: std::hash::Hash> std::hash::Hash for Handled<H, T> {
-    fn hash<H_: std::hash::Hasher>(&self, state: &mut H_) {
-        self.slice.hash(state);
-    }
-}
-
-impl<H, T: Index<U>, U> Index<U> for Handled<H, T> {
-    type Output = <T as Index<U>>::Output;
-    fn index(&self, index: U) -> &Self::Output {
-        self.slice.index(index)
-    }
-}
-
-impl<H, T: IndexMut<U>, U> IndexMut<U> for Handled<H, T> {
-    fn index_mut(&mut self, index: U) -> &mut Self::Output {
-        self.slice.index_mut(index)
-    }
-}
-
-impl<H, T: IntoIterator> IntoIterator for Handled<H, T> {
-    type Item = <T as IntoIterator>::Item;
-    type IntoIter = <T as IntoIterator>::IntoIter;
-    fn into_iter(self) -> Self::IntoIter {
-        self.slice.into_iter()
     }
 }

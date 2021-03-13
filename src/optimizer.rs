@@ -1,10 +1,9 @@
-use crate::f32s;
-use crate::helpers::as_scalar;
-use crate::helpers::AsScalarExt;
-use crate::loss_funcs::LossFunc;
-use crate::network::CalcGradients;
+use crate::{f32s, helpers::as_scalar, loss_funcs::LossFunc, network::Network};
 
-use std::{marker::PhantomData, ops::{Deref, DerefMut}};
+use std::{
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+};
 
 pub trait Optimizer {
     /// Process the provided data and label
@@ -23,115 +22,139 @@ pub trait Optimizer {
     fn out_size(&self) -> usize;
 }
 
-#[derive(Debug)]
-pub struct OptimizerBase<F: LossFunc, O: OptimizerAlg, N: CalcGradients> {
-    optimizer: O,
-    network: N,
-    marker_: std::marker::PhantomData<*const F>,
-    n: usize,
+/// This trait provides interface which must be implemented by optimization
+/// algorithms so that they can be used by the OptimizerBase.
+pub trait OptimizerAlg {
+    /// Modifies the weights based on the gradients such that a minimum can be reached.
+    fn update_weights(&mut self, weights: &mut [f32s], gradients: &[f32s]);
 }
 
-impl<O: OptimizerAlg, N: CalcGradients, F: LossFunc> OptimizerBase<F, O, N> {
-    pub fn new<B: OptimizerBuilder<Output = O>>(mut network: N, optimizer: B) -> Self {
-        network.ready();
-        Self {
-            optimizer: optimizer.build(network.weights().len()),
-            network,
-            marker_: std::marker::PhantomData,
-            n: 0,
-        }
-    }
-}
+pub use base::*;
+mod base {
+    use super::*;
+    use crate::{
+        allocator::{Allocator, GradAllocator, GradStorage},
+        layers::Aligned,
+        loss_funcs::SquaredError,
+        network::{construction::Construction, FeedForward},
+    };
 
-impl<O: OptimizerAlg, N: CalcGradients, F: LossFunc> Optimizer for OptimizerBase<F, O, N> {
-    /// Process pairs of input and output values laid out as [inputs, outputs]
-    fn process(&mut self, input: &[f32], target: &[f32]) -> f32 {
-        self.network.predict(input);
-        let mut grads = vec![0f32; self.network.out_size()];
-        F::gradients(
-            &as_scalar(self.network.output())[..self.network.out_size()],
-            target,
-            &mut grads,
-        );
-
-        self.network.calc_gradients(&grads).unwrap();
-        self.n += 1;
-        let size = self.network.out_size();
-        F::loss(&self.network.output().as_scalar()[..size], target)
+    #[derive(Debug)]
+    pub struct OptimizerBase<F = SquaredError, N = FeedForward, O = Adam> {
+        optimizer: O,
+        network: N,
+        phantom: PhantomData<*const F>,
+        grads: GradStorage,
+        n: usize,
     }
 
-    /// Calculate gradient based on only a single target value. `index` is the index of the value to target.
-    fn process_partial(&mut self, input: &[f32], index: usize, target: f32) -> f32 {
-        self.network.predict(input);
-        let out = as_scalar(self.network.output())[index];
-        let deriv = F::deriv(out, target);
-
-        let mut grads = vec![0f32; self.network.out_size()];
-        grads[index] = deriv;
-
-        self.network.calc_gradients(&grads).unwrap();
-        self.n += 1;
-        F::eval(target, out)
-    }
-
-    /// Update model weights based on collected data.
-    fn update_model(&mut self) {
-        if self.n == 0 {
-            eprintln!("Attempted to update the model without processing any gradients.")
-        }
-        else {
-            let (weights, gradients) = self.network.weight_grads_mut().unwrap();
-
-            // We have to average the gradients
-            let avg = f32s::splat(1. / self.n as f32);
-            for i in gradients.iter_mut() {
-                *i *= avg;
+    impl<F, N, O> OptimizerBase<F, N, O> {
+        pub fn new<B>(construction: Construction<N>, optimizer: B) -> Self
+        where
+            N: Network,
+            B: OptimizerBuilder<Output = O>,
+        {
+            let (network, g_allocator) = construction.decompose();
+            Self {
+                optimizer: optimizer.build(network.weights().len()),
+                network,
+                phantom: PhantomData,
+                grads: g_allocator.finish(),
+                n: 0,
             }
-            
-            self.optimizer.update_weights(weights, gradients);
-            self.network.reset_gradients().unwrap();
-            
-            self.n = 0;
         }
     }
 
-    /// Get input size of the network.
-    fn in_size(&self) -> usize {
-        self.network.in_size()
+    impl<F, N, O> Optimizer for OptimizerBase<F, N, O>
+    where
+        O: OptimizerAlg,
+        N: Network,
+        F: LossFunc,
+    {
+        /// Process pairs of input and output values laid out as [inputs, outputs]
+        fn process(&mut self, input: &[f32], target: &[f32]) -> f32 {
+            let mut out_grads = Aligned::zeroed(self.network.output().scalar());
+            let output = self.network.predict(input);
+            let loss = F::loss(output.as_scalar(), target);
+
+            F::gradients(output.as_scalar(), target, out_grads.as_scalar_mut());
+
+            self.network.calc_gradients(&mut self.grads, &out_grads);
+            self.n += 1;
+            loss
+        }
+
+        /// Calculate gradient based on only a single target value. `index` is the index of the value to target.
+        fn process_partial(&mut self, input: &[f32], index: usize, target: f32) -> f32 {
+            let output = self.network.predict(input).as_scalar()[index];
+            let deriv = F::deriv(output, target);
+
+            let mut out_grads = Aligned::zeroed(self.network.output().scalar());
+            out_grads.as_scalar_mut()[index] = deriv;
+
+            self.network.calc_gradients(&mut self.grads, &out_grads);
+            self.n += 1;
+            F::eval(output, target)
+        }
+
+        /// Update model weights based on collected data.
+        fn update_model(&mut self) {
+            if self.n == 0 {
+                eprintln!("Attempted to update the model without processing any gradients.")
+            } else {
+                let gradients = self.grads.raw_mut();
+                let weights = self.network.weights_mut();
+
+                // We have to average the gradients
+                let avg = f32s::splat(1. / self.n as f32);
+                for i in gradients.iter_mut() {
+                    *i *= avg;
+                }
+
+                self.optimizer.update_weights(weights, gradients);
+                weights.fill(f32s::splat(0.));
+                self.n = 0;
+            }
+        }
+
+        /// Get input size of the network.
+        fn in_size(&self) -> usize {
+            self.network.input().scalar()
+        }
+
+        /// Get output size of the network.
+        fn out_size(&self) -> usize {
+            self.network.output().scalar()
+        }
     }
 
-    /// Get output size of the network.
-    fn out_size(&self) -> usize {
-        self.network.out_size()
+    impl<F, N, O> Deref for OptimizerBase<F, N, O> {
+        type Target = N;
+
+        fn deref(&self) -> &Self::Target {
+            &self.network
+        }
     }
-}
 
-impl<O: OptimizerAlg, N: CalcGradients, F: LossFunc> Deref for OptimizerBase<F, O, N> {
-    type Target = N;
-
-    fn deref(&self) -> &Self::Target {
-        &self.network
+    impl<F, N, O> DerefMut for OptimizerBase<F, N, O> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.network
+        }
     }
-}
 
-impl<O: OptimizerAlg, N: CalcGradients, F: LossFunc> DerefMut for OptimizerBase<F, O, N> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.network
-    }
-}
-
-impl<O: OptimizerAlg, N: CalcGradients, F: LossFunc> Clone for OptimizerBase<F, O, N>
-where
-    O: Clone,
-    N: Clone,
-{
-    fn clone(&self) -> Self {
-        Self {
-            optimizer: self.optimizer.clone(),
-            network: self.network.clone(),
-            marker_: PhantomData,
-            n: self.n,
-            
+    impl<F, N, O> Clone for OptimizerBase<F, N, O>
+    where
+        O: Clone,
+        N: Clone,
+    {
+        fn clone(&self) -> Self {
+            Self {
+                optimizer: self.optimizer.clone(),
+                network: self.network.clone(),
+                phantom: PhantomData,
+                grads: self.grads.clone(),
+                n: self.n,
+            }
         }
     }
 }
@@ -144,13 +167,6 @@ pub trait OptimizerBuilder {
     fn build(self, len: usize) -> Self::Output;
 }
 
-/// This trait provides interface which must be implemented by optimization
-/// algorithms so that they can be used by the OptimizerBase.
-pub trait OptimizerAlg {
-    /// Modifies the weights based on the gradients such that a minimum can be reached.
-    fn update_weights(&mut self, weights: &mut [f32s], gradients: &mut [f32s]);
-}
-
 /// Gradient descent simply steps the weights based on their derivatives.
 #[derive(Clone, Debug)]
 pub struct GradientDescent {
@@ -158,7 +174,7 @@ pub struct GradientDescent {
 }
 
 impl OptimizerAlg for GradientDescent {
-    fn update_weights(&mut self, weights: &mut [f32s], gradients: &mut [f32s]) {
+    fn update_weights(&mut self, weights: &mut [f32s], gradients: &[f32s]) {
         assert_eq!(weights.len(), gradients.len());
         let k = f32s::splat(-self.l_rate);
         for (w, d) in weights.iter_mut().zip(gradients) {
@@ -208,7 +224,7 @@ pub struct Adam {
 }
 
 impl OptimizerAlg for Adam {
-    fn update_weights(&mut self, weights: &mut [f32s], gradients: &mut [f32s]) {
+    fn update_weights(&mut self, weights: &mut [f32s], gradients: &[f32s]) {
         assert_eq!(gradients.len(), weights.len());
         assert_eq!(gradients.len(), self.momentum.len());
         assert_eq!(gradients.len(), self.velocity.len());

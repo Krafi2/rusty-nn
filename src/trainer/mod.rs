@@ -1,10 +1,9 @@
 use crate::helpers::IndexShuffler;
 use crate::optimizer::Optimizer;
-
 use std::ops::{Deref, DerefMut};
 
-mod processor;
 use processor::{GenericProcessor, TwoVecs};
+mod processor;
 
 /// This trait must be implemented by all objects which want to make use of the [StochasticTrainer](self::StochaisticTrainer).
 /// The object is first asked about the size of the data it contains. It will then be provided randomly chosen

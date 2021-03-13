@@ -1,157 +1,164 @@
-use super::{
-    BasicLayer, FromArch, GradError, Layer, LayerArch, LayerBuilder, LayerGradients, OutShape,
+use crate::{
+    a_funcs::ActivFunc,
+    allocator::{
+        DualAllocator, GradHndl, GradStorage, Handle, WeightAllocator, WeightHndl, WeightStorage,
+    },
+    f32s,
+    helpers::{as_scalar, as_scalar_mut, simd_to_iter, simd_with, sum, IterMask, VectorAdapter},
+    initializer::{Initializer, Xavier},
+    layers::{no_value, Aligned, BasicLayer, FromArch, Layer, LayerArch, LayerBuilder, Shape}
 };
-use crate::a_funcs::ActivFunc;
-use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
-use crate::f32s;
-use crate::helpers::{as_scalar, as_scalar_mut, empty_vec_simd, least_size, splat_n, sum};
-use crate::initializer::Initializer;
-
 use serde::{Deserialize, Serialize};
+use std::marker::PhantomData;
 
-#[derive(Serialize, Deserialize, Debug)]
 /// Your run of the mill fully connected (dense) layer
-pub struct DenseLayer<T: ActivFunc> {
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DenseLayer<F> {
     in_size: usize,
-    actual_in: usize, //input size rounded up to the nearest simd type
-
     size: usize,
-    actual_size: usize,
 
-    weights: WeightHndl,
-    biases: WeightHndl, //size of actual_size
-
-    w_gradients: GradHdnl, //handle to weight gradients
-    b_gradients: GradHdnl, //handle to bias gradients
+    weights: Handle,
+    biases: Handle,
 
     update_weights: bool,
     update_biases: bool,
 
-    #[serde(skip, default = "empty_vec_simd")]
-    weighted_inputs: Vec<f32s>, //size of actual_size
-    #[serde(skip, default = "empty_vec_simd")]
-    activations: Vec<f32s>, //size of actual_size
-    #[serde(skip, default = "empty_vec_simd")]
-    temp: Vec<f32s>, //size of actual_in
-    marker_: std::marker::PhantomData<*const T>,
+    #[serde(with = "no_value")]
+    weighted_inputs: Aligned,
+    #[serde(with = "no_value")]
+    activations: Aligned,
+    #[serde(with = "no_value")]
+    temp: Aligned,
+
+    phantom: PhantomData<*const F>,
 }
 
-impl<T: ActivFunc> Layer for DenseLayer<T> {
-    fn rebuild(&mut self) {
-        self.weighted_inputs = splat_n(self.actual_size, 0.);
-        self.activations = splat_n(self.actual_size, 0.);
-        self.temp = splat_n(self.actual_in, 0.);
-    }
+impl<F> Layer for DenseLayer<F>
+where
+    F: ActivFunc,
+{
+    fn eval(&mut self, input: &Aligned, weights: &WeightStorage) -> &Aligned {
+        let biases = weights.get(self.biases);
+        let weights = weights.get(self.weights);
 
-    fn eval(&mut self, inputs: &[f32s], med: Mediator<&[f32s], WeightHndl>) -> &[f32s] {
-        let weights = med.get(&self.weights);
-        let biases = med.get(&self.biases);
+        let in_shape = self.input();
+        let out_shape = self.output();
 
         // assert dominance
-        assert_eq!(weights.len(), self.actual_in * self.size);
-        assert_eq!(biases.len(), self.actual_size);
-        assert_eq!(self.temp.len(), self.actual_in);
-        assert_eq!(self.weighted_inputs.len(), self.actual_size);
-        assert_eq!(self.activations.len(), self.actual_size);
-        assert_eq!(inputs.len(), self.actual_in);
+        assert_eq!(
+            weights.as_vector().len(),
+            in_shape.vector() * out_shape.scalar()
+        );
+        assert_eq!(biases.as_vector().len(), out_shape.vector());
+        assert_eq!(self.temp.as_vector().len(), in_shape.vector());
+        assert_eq!(self.weighted_inputs.as_vector().len(), out_shape.vector());
+        assert_eq!(self.activations.as_vector().len(), out_shape.vector());
+        assert_eq!(input.as_vector().len(), in_shape.vector());
 
         for (weights, weighted_input) in weights
-            .chunks_exact(self.actual_in)
-            .zip(as_scalar_mut(&mut self.weighted_inputs))
+            .as_vector()
+            .chunks_exact(in_shape.vector())
+            .zip(self.weighted_inputs.as_scalar_mut())
         {
             //TODO test if mul_add is faster
-            for ((inp, w), temp) in inputs.iter().zip(weights).zip(&mut self.temp) {
+            for ((inp, w), temp) in input
+                .as_vector()
+                .iter()
+                .zip(weights)
+                .zip(self.temp.as_vector_mut())
+            {
                 *temp = *inp * *w;
             }
-            *weighted_input = sum(&self.temp, self.in_size);
+            *weighted_input = sum(self.temp.as_vector(), in_shape.scalar());
         }
 
-        for (wi, b) in self.weighted_inputs.iter_mut().zip(biases) {
+        for (wi, b) in self
+            .weighted_inputs
+            .as_vector_mut()
+            .iter_mut()
+            .zip(biases.as_vector())
+        {
             *wi += *b;
         }
 
-        for (wi, o) in as_scalar(&self.weighted_inputs)
+        for (wi, o) in self
+            .weighted_inputs
+            .as_scalar()
             .iter()
-            .zip(as_scalar_mut(&mut self.activations))
+            .zip(self.activations.as_scalar_mut())
         {
-            *o = T::evaluate(*wi);
+            *o = F::evaluate(*wi);
         }
-        self.output()
-    }
 
-    fn output(&self) -> &[f32s] {
         &self.activations
     }
-    fn out_size(&self) -> usize {
-        self.size
-    }
-    fn actual_out(&self) -> usize {
-        self.actual_size
-    }
-    fn in_size(&self) -> usize {
-        self.in_size
-    }
-    fn out_shape(&self) -> OutShape {
-        OutShape {
-            dims: vec![self.out_size()],
-        }
-    }
-    fn weight_count(&self) -> usize {
-        self.actual_in * self.size + self.actual_size
-    }
-}
 
-impl<T: ActivFunc> LayerGradients for DenseLayer<T> {
     fn calc_gradients(
         &mut self,
-        weights: Mediator<&[f32s], WeightHndl>,
-        mut self_deriv: Mediator<&mut [f32s], GradHdnl>,
-        inputs: &[f32s],
-        in_deriv: &[f32s],
-        out_deriv: &mut [f32s],
-    ) -> Result<(), GradError> {
-        let mut b_grad = self_deriv.get_mut(&mut self.b_gradients);
-        let mut w_grad = self_deriv.get_mut(&mut self.w_gradients);
-        let weights = weights.get(&self.weights);
+        input: &Aligned,
+        weights: &WeightStorage,
+        gradients: &mut GradStorage,
+        in_grads: &Aligned,
+        out_grads: &mut Aligned,
+    ) {
+        let mut b_grads = gradients.get_mut(self.biases);
+        let weights = weights.get(self.weights);
+
+        let in_shape = self.input();
+        let out_shape = self.output();
 
         // assert dominance
-        assert_eq!(weights.len(), self.actual_in * self.size);
-        assert_eq!(self.weighted_inputs.len(), self.actual_size);
-        assert_eq!(self.temp.len(), self.actual_in);
-        assert_eq!(self.activations.len(), self.actual_size);
-        assert_eq!(b_grad.len(), self.actual_size);
-        assert_eq!(w_grad.len(), self.actual_in * self.size);
-        assert_eq!(inputs.len(), self.actual_in);
-        assert!(self.actual_size <= in_deriv.len());
-        assert!(self.actual_in <= out_deriv.len());
+        assert_eq!(weights.as_vector().len(), in_shape.vector() * self.size);
+        assert_eq!(self.weighted_inputs.as_vector().len(), out_shape.vector());
+        assert_eq!(self.temp.as_vector().len(), in_shape.vector());
+        assert_eq!(self.activations.as_vector().len(), out_shape.vector());
+        assert_eq!(b_grads.as_vector().len(), out_shape.vector());
+        assert_eq!(input.shape().vector(), in_shape.vector());
+        assert!(out_shape.vector() <= in_grads.shape().vector());
+        assert!(in_shape.vector() <= out_grads.shape().vector());
 
         // compute activation function derivatives
-        for ((temp, inp), out) in as_scalar_mut(&mut self.temp)
+        for ((temp, inp), out) in self
+            .temp
+            .as_scalar_mut()
             .iter_mut()
-            .zip(as_scalar(&self.weighted_inputs))
-            .zip(as_scalar(&self.activations))
+            .zip(self.weighted_inputs.as_scalar())
+            .zip(self.activations.as_scalar())
         {
-            *temp = T::derivative(*inp, *out);
+            *temp = F::derivative(*inp, *out);
         }
-        for (temp, id) in self.temp.iter_mut().zip(in_deriv) {
+        for (temp, id) in self
+            .temp
+            .as_vector_mut()
+            .iter_mut()
+            .zip(in_grads.as_vector())
+        {
             *temp *= *id;
         }
 
         // compute bias derivatives
         if self.update_biases {
-            for (bd, temp) in b_grad.iter_mut().zip(&self.temp) {
+            for (bd, temp) in b_grads
+                .as_vector_mut()
+                .iter_mut()
+                .zip(self.temp.as_vector())
+            {
                 *bd += *temp;
             }
         }
 
+        let mut w_grads = gradients.get_mut(self.weights);
+        assert_eq!(w_grads.as_vector().len(), in_shape.vector() * self.size);
+
         // compute weight derivative
         if self.update_weights {
-            for (wds, temp) in w_grad
-                .chunks_exact_mut(self.actual_in)
-                .zip(as_scalar(&self.temp))
+            for (wds, temp) in w_grads
+                .as_vector_mut()
+                .chunks_exact_mut(in_shape.vector())
+                .zip(self.temp.as_scalar())
             {
                 let af_deriv = f32s::splat(*temp);
-                for (wd, inp) in wds.iter_mut().zip(inputs) {
+                for (wd, inp) in wds.iter_mut().zip(input.as_vector()) {
                     *wd += *inp * af_deriv;
                 }
             }
@@ -159,124 +166,98 @@ impl<T: ActivFunc> LayerGradients for DenseLayer<T> {
 
         //compute output derivatives
         for (weights, temp) in weights
-            .chunks_exact(self.actual_in)
-            .zip(as_scalar(&self.temp))
+            .as_vector()
+            .chunks_exact(in_shape.vector())
+            .zip(self.temp.as_scalar())
         {
             let af_deriv = f32s::splat(*temp);
-            for (od, w) in out_deriv.iter_mut().zip(weights) {
+            for (od, w) in out_grads.as_vector_mut().iter_mut().zip(weights) {
                 *od += *w * af_deriv;
             }
         }
-        Ok(())
+    }
+
+    fn activations(&self) -> &Aligned {
+        &self.activations
+    }
+
+    fn input(&self) -> Shape {
+        Shape::new(self.in_size)
+    }
+
+    fn output(&self) -> Shape {
+        Shape::new(self.size)
     }
 }
 
-impl<T: ActivFunc> DenseLayer<T> {
-    pub fn new<I: Initializer>(
-        mut init: I,
-        mut alloc: Allocator,
+impl<F> DenseLayer<F> {
+    pub fn new<I>(
+        init: I,
+        alloc: &mut DualAllocator,
         in_size: usize,
         size: usize,
         update_w: bool,
         update_b: bool,
-    ) -> DenseLayer<T> {
-        let actual_in = least_size(in_size, f32s::lanes());
-        let actual_size = least_size(size, f32s::lanes());
-        // weight count
-        let wc = actual_in * size;
+    ) -> Self
+    where
+        I: Initializer,
+    {
+        let in_shape = Shape::new(in_size);
+        let out_shape = Shape::new(size);
+        let weight_count = in_shape.vector() * out_shape.scalar();
 
-        // make sure that any extra weights get initialized with zeroes
-        let mut n = 0;
-        let w_handles = alloc.allocate_with(wc, || {
-            let w = if n < in_size {
-                init.get(in_size, size)
-            } else {
-                0.
-            };
-            n += 1;
-            if n == actual_in * f32s::lanes() {
-                n = 0;
-            }
-            w
-        });
+        let init = init.construct(in_size, size);
+        let init = IterMask::new(init, in_shape.scalar(), in_shape.vector() * f32s::lanes());
 
-        let b_handles = alloc.allocate(actual_size);
+        let weights = alloc.allocate(weight_count, VectorAdapter::new(init));
+        let biases = alloc.allocate_zeroed(out_shape.vector());
 
-        let mut layer = DenseLayer {
+        Self {
             in_size,
-            actual_in,
             size,
-            actual_size,
-            weights: w_handles.0,
-            biases: b_handles.0,
-            w_gradients: w_handles.1,
-            b_gradients: b_handles.1,
+            weights,
+            biases,
             update_weights: update_w,
             update_biases: update_b,
-            weighted_inputs: vec![],
-            activations: vec![],
-            temp: vec![],
-            marker_: std::marker::PhantomData,
-        };
-        layer.rebuild();
-        layer
-    }
-}
-
-impl<T: ActivFunc> Clone for DenseLayer<T> {
-    fn clone(&self) -> Self {
-        unsafe {
-            Self {
-                in_size: self.in_size,
-                actual_in: self.actual_in,
-                size: self.size,
-                actual_size: self.actual_size,
-                weights: self.weights.clone(),
-                biases: self.biases.clone(),
-                w_gradients: self.w_gradients.clone(),
-                b_gradients: self.b_gradients.clone(),
-                update_weights: self.update_weights,
-                update_biases: self.update_biases,
-                weighted_inputs: self.weighted_inputs.clone(),
-                activations: self.activations.clone(),
-                temp: self.temp.clone(),
-                marker_: self.marker_,
-            }
+            weighted_inputs: Aligned::zeroed(out_shape.scalar()),
+            activations: Aligned::zeroed(out_shape.scalar()),
+            temp: Aligned::zeroed(in_shape.scalar()),
+            phantom: PhantomData,
         }
     }
 }
 
-pub struct DenseBuilder<T: ActivFunc, I: Initializer> {
+pub struct DenseBuilder<F, I = Xavier> {
     init: I,
     size: usize,
     update_w: bool,
     update_b: bool,
-    marker_: std::marker::PhantomData<*const T>,
+    phantom: PhantomData<*const F>,
 }
 
-impl<T: ActivFunc, I: Initializer> DenseBuilder<T, I> {
+impl<F, I> DenseBuilder<F, I> {
     pub fn new(init: I, size: usize, update_w: bool, update_b: bool) -> Self {
         DenseBuilder {
             init,
             size,
             update_w,
             update_b,
-            marker_: std::marker::PhantomData,
+            phantom: PhantomData,
         }
     }
 }
 
-impl<T: ActivFunc, I: Initializer> LayerBuilder for DenseBuilder<T, I> {
-    type Output = DenseLayer<T>;
+impl<F, I> LayerBuilder for DenseBuilder<F, I>
+where
+    I: Initializer,
+{
+    type Output = DenseLayer<F>;
 
-    fn connect(self, previous: Option<&dyn Layer>, alloc: Allocator) -> Self::Output {
-        let previous = previous
-            .expect("A DenseLayer cannot be the input layer of a network, use a specialized layer");
-        let in_size = previous.out_size();
+    fn connect(self, input: Shape, alloc: &mut DualAllocator) -> Self::Output {
         DenseLayer::new(
             self.init,
             alloc,
-            in_size,
+            input.scalar(),
             self.size,
             self.update_w,
             self.update_b,
@@ -296,64 +277,56 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::a_funcs::Test;
-    use crate::helpers::as_scalar;
-    use crate::initializer::WeightInit;
-    use crate::layers::tests::*;
+    use crate::{
+        a_funcs::Test,
+        allocator::{Allocator, DualAllocator, GradAllocator},
+        helpers::{as_scalar, VectorAdapter},
+        layers::tests::check,
+    };
 
-    fn create_layer() -> (DenseLayer<Test>, Vec<f32s>) {
-        let mut weights = Vec::new();
-        let alloc = Allocator::new(&mut weights);
-        let init = WeightInit::new((1..=12).map(|x| x as f32));
-        let layer = DenseLayer::<Test>::new(init, alloc, 4, 3, true, true);
+    fn create_layer() -> (DenseLayer<Test>, WeightStorage, GradAllocator) {
+        let mut alloc = DualAllocator::new();
+        let init = (1..=12).map(|x| x as f32);
+        let layer = DenseLayer::<Test>::new(init, &mut alloc, 4, 3, true, true);
 
-        (layer, weights)
+        let (weights, grads) = alloc.finish();
+        (layer, weights, grads)
     }
 
-    const INPUTS: [f32s; 1] = [f32s::new(1., 2., 3., 4.)];
+    const INPUTS: [f32; 4] = [1., 2., 3., 4.];
     const TOLERANCE: f32 = 0.0001;
 
     #[test]
     fn dense_eval() {
-        let (mut layer, weights) = create_layer();
+        let (mut layer, weights, _) = create_layer();
 
-        layer.eval(&INPUTS, Mediator::new(&weights));
-        let output = &as_scalar(&layer.output())[0..3];
+        let input = Aligned::from_scalar(&INPUTS);
+        let output = layer.eval(&input, &weights);
         let expected = &[60., 140., 220.];
 
-        check(expected, output, TOLERANCE, "output");
+        // dbg!(&layer);
+        // dbg!(&weights);
+
+        check(expected, output.as_scalar(), TOLERANCE, "output");
     }
 
     /// Computes the various derivatives to be tested.
-    /// [weight_deriv, bias_deriv, out_deriv]
+    /// The derivatives are returned in this order [weight_deriv, bias_deriv, out_deriv]
     fn derivs() -> [Vec<f32>; 3] {
-        let (mut layer, weights) = create_layer();
+        let (mut layer, weights, grads) = create_layer();
+        let mut grads = grads.finish();
 
-        let input = [f32s::new(1., 2., 3., 4.)];
-        layer.eval(&input, Mediator::new(&weights));
+        let input = Aligned::from_scalar(&INPUTS);
+        let in_grads = Aligned::from_scalar(&[0.1, 0.2, 0.3, 0.4]);
+        let mut out_grads = Aligned::zeroed(4);
 
-        let mut deriv = vec![f32s::splat(0.); weights.len()];
-        let mut out_deriv = vec![f32s::splat(0.); layer.actual_in];
+        layer.eval(&input, &weights);
+        layer.calc_gradients(&input, &weights, &mut grads, &in_grads, &mut out_grads);
 
-        layer.ready();
-        layer
-            .calc_gradients(
-                Mediator::new(&weights),
-                Mediator::new(deriv.as_mut()),
-                &INPUTS,
-                &[f32s::new(0.1, 0.2, 0.3, 0.4)],
-                &mut out_deriv,
-            )
-            .unwrap();
-
-        let mediator = Mediator::<&mut [_], _>::new(deriv.as_mut());
-        let weight_deriv = as_scalar(&mediator.get(&layer.w_gradients));
-        let bias_deriv = &as_scalar(&mediator.get(&layer.b_gradients))[0..3];
-        let out_deriv = as_scalar(&out_deriv);
         [
-            weight_deriv.to_owned(),
-            bias_deriv.to_owned(),
-            out_deriv.to_owned(),
+            grads.get(layer.weights).as_scalar()[..12].to_owned(),
+            grads.get(layer.biases).as_scalar()[..3].to_owned(),
+            out_grads.into_scalar().to_vec(),
         ]
     }
 

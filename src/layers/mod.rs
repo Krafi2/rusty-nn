@@ -1,113 +1,28 @@
 pub mod dense_layer;
-pub mod input_layer;
-pub mod norm_layer;
+pub mod map_layer;
 
 pub use dense_layer::DenseBuilder;
-pub use input_layer::InputBuilder;
-pub use norm_layer::NormBuilder;
+pub use map_layer::MapBuilder;
 
 use self::dense_layer::DenseLayer;
-use self::input_layer::InputLayer;
-use self::norm_layer::NormLayer;
+use self::map_layer::MapLayer;
 
-use crate::a_funcs::{ActivFunc, Identity, ReLU, SiLU, Sigmoid, TanH};
-use crate::allocator::{Allocator, GradHdnl, Mediator, WeightHndl};
-use crate::f32s;
+use crate::{
+    a_funcs::{ActivFunc, Identity, ReLU, SiLU, Sigmoid, TanH},
+    allocator::{DualAllocator, GradStorage, WeightAllocator, WeightStorage},
+    f32s,
+    helpers::to_blocks,
+    serde::boxed_simd,
+};
 
 use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Serialize};
 
-use std::error::Error;
-use std::fmt::Display;
-use std::ops::{Deref, DerefMut};
-
-//TODO maybe remove the Clone bound
-#[enum_dispatch]
-pub trait Layer {
-    /// Reallocate memory needed for evaluation.
-    /// Used after deserialization as this memory doesnt need to be serialized.
-    fn rebuild(&mut self);
-
-    /// Evaluate the layer's output.
-    fn eval(&mut self, inputs: &[f32s], med: Mediator<&[f32s], WeightHndl>) -> &[f32s];
-
-    /// Get layer's output
-    fn output(&self) -> &[f32s];
-    /// Get layer's output size
-    fn out_size(&self) -> usize;
-    /// Get the actual size of the output in terms of f32s
-    fn actual_out(&self) -> usize;
-    /// Get layer's input size
-    fn in_size(&self) -> usize;
-    /// Get the shape of the output
-    fn out_shape(&self) -> OutShape;
-    /// Get number of weights in the layer in terms of f32s
-    fn weight_count(&self) -> usize;
-
-    /// This function should panic for all non-input layer types
-    fn set_activations(&mut self, _activations: &[f32]) {
-        unimplemented!(
-            "set_activations not implemented for {}",
-            std::any::type_name::<Self>()
-        )
-    }
-}
-
-#[enum_dispatch]
-pub trait LayerGradients: Layer {
-    /// Calculates derivatives of the layer's weights. `in_deriv` are the partial derivatives at the end of the next layer
-    /// and `out_deriv` are the derivatives at the layer's input, which will be filled in.
-    /// Returns None if the layer isn't readied.
-    fn calc_gradients(
-        &mut self,
-        weights: Mediator<&[f32s], WeightHndl>,
-        self_deriv: Mediator<&mut [f32s], GradHdnl>,
-        inputs: &[f32s],
-        in_deriv: &[f32s],
-        out_deriv: &mut [f32s],
-    ) -> Result<(), GradError>;
-
-    /// Ready the network for optimization, if already readied do nothing.
-    fn ready(&mut self) {}
-
-    /// Undo the changes made by ready; if the network isn't readied do nothing.
-    fn unready(&mut self) {}
-
-    /// Reset gradients to zero
-    fn reset_gradients(&mut self) {}
-}
-
-/// Trait all layer builders must implement in order to be added to a NetworkBuilder via the add function.
-pub trait LayerBuilder {
-    type Output: Layer;
-    /// Connect a layer to the previous one. `shape` will be None if there are no layers before.
-    fn connect(self, previous: Option<&dyn Layer>, alloc: Allocator) -> Self::Output;
-}
-
-/// Error encountered when calculating the weight gradients.
-/// Currently this error simply means that the queried structure wasn't
-/// properly initialized.
-#[derive(Clone, Debug, Default)]
-pub struct GradError;
-
-impl GradError {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Error for GradError {}
-
-impl Display for GradError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Wasn't ready to calculate gradients")
-    }
-}
-
-#[derive(Clone)]
-pub struct OutShape {
-    pub dims: Vec<usize>,
-}
+use std::{
+    error::Error,
+    fmt::Display,
+    ops::{Deref, DerefMut},
+};
 
 /// This enum represents the architecture of a layer. It is primarily used
 /// in the BasicLayer enum to fully describe a layer.
@@ -116,8 +31,7 @@ pub struct OutShape {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum LayerArch<T: ActivFunc> {
     DenseLayer(DenseLayer<T>),
-    InputLayer(InputLayer),
-    NormLayer(NormLayer<T>),
+    MapLayer(MapLayer<T>),
 }
 
 /// This enum describes the architecture and activation function of a layer
@@ -133,65 +47,283 @@ pub enum BasicLayer {
     ReLU(LayerArch<ReLU>),
 }
 
-// The conversion is implemented like this instead of a trait, because the from trait is incompatible
-// with some trait definitions made by the enum_dispatch macro and this seems like the path of least resistance
-// as I don't think anyone will ever need to pass LayerArch as a generic argument needing the trait
-pub trait FromArch<T: ActivFunc> {
-    fn from(arch: LayerArch<T>) -> BasicLayer;
+#[enum_dispatch]
+pub trait Layer {
+    /// Evaluate the layer's output.
+    fn eval(&mut self, input: &Aligned, weights: &WeightStorage) -> &Aligned;
+
+    /// Calculates derivatives of the layer's weights. `in_deriv` are the partial derivatives at the end of the next layer
+    /// and `out_deriv` are the derivatives at the layer's input, which will be filled in.
+    /// Returns None if the layer isn't readied.
+    fn calc_gradients(
+        &mut self,
+        input: &Aligned,
+        weights: &WeightStorage,
+        gradients: &mut GradStorage,
+        in_grads: &Aligned,
+        out_grads: &mut Aligned,
+    );
+
+    fn activations(&self) -> &Aligned;
+
+    fn input(&self) -> Shape;
+
+    /// Get layer's output
+    fn output(&self) -> Shape;
 }
 
-macro_rules! impl_from_arch {
-    ($t:tt) => {
-        impl FromArch<$t> for BasicLayer {
-            fn from(arch: LayerArch<$t>) -> Self {
-                Self::$t(arch)
+/// Trait all layer constructors must implement in order to be added to a NetworkBuilder via the add function.
+pub trait LayerBuilder {
+    type Output;
+    /// Connect a layer to the previous one. `input` is the shape of the previous layer's output.
+    fn connect(self, in_shape: Shape, alloc: &mut DualAllocator) -> Self::Output;
+}
+
+pub use shape::Shape;
+mod shape {
+    use super::*;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct Shape {
+        scalar: usize,
+        vector: usize,
+    }
+
+    impl Shape {
+        pub fn new(len: usize) -> Self {
+            Self {
+                scalar: len,
+                vector: to_blocks(len, f32s::lanes()),
             }
         }
-    };
+
+        pub fn scalar(&self) -> usize {
+            self.scalar
+        }
+
+        pub fn vector(&self) -> usize {
+            self.vector
+        }
+    }
 }
 
-impl_from_arch!(Sigmoid);
-impl_from_arch!(Identity);
-impl_from_arch!(TanH);
-impl_from_arch!(SiLU);
-impl_from_arch!(ReLU);
+pub use aligned::Aligned;
+mod aligned {
+    // TODO implement ser de
+
+    use crate::helpers::{as_scalar, as_scalar_mut, into_scalar};
+
+    use super::*;
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub struct Aligned {
+        #[serde(with = "boxed_simd")]
+        array: Box<[f32s]>,
+        len: usize,
+    }
+
+    impl Aligned {
+        pub fn zeroed(len: usize) -> Self {
+            let vec_len = to_blocks(len, f32s::lanes());
+            Self {
+                array: vec![f32s::splat(0.); vec_len].into_boxed_slice(),
+                len,
+            }
+        }
+
+        pub fn from_vector<T>(vec: T, len: usize) -> Self
+        where
+            T: Into<Box<[f32s]>>,
+        {
+            let array = vec.into();
+            assert!(len <= array.len() * f32s::lanes());
+            Self { array, len }
+        }
+
+        pub fn from_scalar<T>(vec: &T) -> Self
+        where
+            T: AsRef<[f32]>,
+        {
+            let array = vec.as_ref();
+            let mut new = Self::zeroed(array.len());
+            new.as_scalar_mut().copy_from_slice(array);
+            new
+        }
+
+        pub fn as_scalar(&self) -> &[f32] {
+            &as_scalar(&self.array)[..self.len]
+        }
+
+        pub fn as_vector(&self) -> &[f32s] {
+            &self.array
+        }
+
+        pub fn as_scalar_mut(&mut self) -> &mut [f32] {
+            &mut as_scalar_mut(&mut self.array)[..self.len]
+        }
+
+        pub fn as_vector_mut(&mut self) -> &mut [f32s] {
+            &mut self.array
+        }
+
+        pub fn into_vector(self) -> Box<[f32s]> {
+            self.array
+        }
+
+        pub fn into_scalar(self) -> Box<[f32]> {
+            into_scalar(self.array)
+        }
+
+        pub fn shape(&self) -> Shape {
+            Shape::new(self.len)
+        }
+
+        pub fn eq_shape(&self, other: Aligned) -> bool {
+            self.shape() == other.shape()
+        }
+    }
+
+    // impl Deref for Aligned {
+    //     type Target = [f32];
+
+    //     fn deref(&self) -> &Self::Target {
+    //         self.as_scalar()
+    //     }
+    // }
+
+    // impl DerefMut for Aligned {
+    //     fn deref_mut(&mut self) -> &mut Self::Target {
+    //         self.as_scalar_mut()
+    //     }
+    // }
+
+    impl AsRef<[f32]> for Aligned {
+        fn as_ref(&self) -> &[f32] {
+            self.as_scalar()
+        }
+    }
+
+    impl AsMut<[f32]> for Aligned {
+        fn as_mut(&mut self) -> &mut [f32] {
+            self.as_scalar_mut()
+        }
+    }
+
+    impl AsRef<[f32s]> for Aligned {
+        fn as_ref(&self) -> &[f32s] {
+            self.as_vector()
+        }
+    }
+
+    impl AsMut<[f32s]> for Aligned {
+        fn as_mut(&mut self) -> &mut [f32s] {
+            self.as_vector_mut()
+        }
+    }
+}
+
+pub use no_value::{deserialize, serialize};
+pub mod no_value {
+    use super::*;
+    use serde::{
+        de::{self, MapAccess, Visitor},
+        ser::SerializeStruct,
+        Deserializer, Serializer,
+    };
+
+    pub fn serialize<S>(aligned: &Aligned, ser: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = ser.serialize_struct("aligned_no_value", 1)?;
+        state.serialize_field("len", &aligned.shape().scalar())?;
+        state.end()
+    }
+
+    struct NoValueVisitor;
+
+    impl<'de> Visitor<'de> for NoValueVisitor {
+        type Value = Aligned;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a map containing len")
+        }
+
+        fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            match map.next_entry()? {
+                Some(("len", len)) => Ok(Aligned::zeroed(len)),
+                Some((field, _)) => Err(<A::Error as de::Error>::unknown_field(field, &["len"])),
+                None => Err(<A::Error as de::Error>::missing_field("len")),
+            }
+        }
+    }
+
+    pub fn deserialize<'de, D>(de: D) -> Result<Aligned, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        de.deserialize_struct("aligned_no_value", &["len"], NoValueVisitor)
+    }
+}
+
+pub use from_arch::FromArch;
+mod from_arch {
+    use super::*;
+
+    // The conversion is implemented like this instead of a trait, because the from trait is incompatible
+    // with some trait definitions made by the enum_dispatch macro and this seems like the path of least resistance
+    // as I don't think anyone will ever need to pass LayerArch as a generic argument needing the trait
+    pub trait FromArch<T: ActivFunc> {
+        fn from(arch: LayerArch<T>) -> BasicLayer;
+    }
+
+    macro_rules! impl_from_arch {
+        ($t:tt) => {
+            impl FromArch<$t> for BasicLayer {
+                fn from(arch: LayerArch<$t>) -> Self {
+                    Self::$t(arch)
+                }
+            }
+        };
+    }
+
+    impl_from_arch!(Sigmoid);
+    impl_from_arch!(Identity);
+    impl_from_arch!(TanH);
+    impl_from_arch!(SiLU);
+    impl_from_arch!(ReLU);
+}
 
 macro_rules! impl_layer_from_deref {
     () => {
-        fn rebuild(&mut self) {
-            <Self as DerefMut>::deref_mut(self).rebuild()
+        fn eval(&mut self, input: &Aligned, weights: &WeightStorage) -> &Aligned {
+            self.deref_mut().eval(input, weights)
         }
 
-        fn eval(&mut self, inputs: &[f32s], med: Mediator<&[f32s], WeightHndl>) -> &[f32s] {
-            <Self as DerefMut>::deref_mut(self).eval(inputs, med)
+        fn calc_gradients(
+            &mut self,
+            input: &Aligned,
+            weights: &WeightStorage,
+            gradients: &mut GradStorage,
+            in_grads: &Aligned,
+            out_grads: &mut Aligned,
+        ) {
+            self.deref_mut()
+                .calc_gradients(input, weights, gradients, in_grads, out_grads)
         }
 
-        fn output(&self) -> &[f32s] {
-            <Self as Deref>::deref(self).output()
+        fn activations(&self) -> &Aligned {
+            self.deref().activations()
         }
 
-        fn out_size(&self) -> usize {
-            <Self as Deref>::deref(self).out_size()
+        fn input(&self) -> Shape {
+            self.deref().input()
         }
 
-        fn actual_out(&self) -> usize {
-            <Self as Deref>::deref(self).actual_out()
-        }
-
-        fn in_size(&self) -> usize {
-            <Self as Deref>::deref(self).in_size()
-        }
-
-        fn out_shape(&self) -> OutShape {
-            <Self as Deref>::deref(self).out_shape()
-        }
-
-        fn weight_count(&self) -> usize {
-            <Self as Deref>::deref(self).weight_count()
-        }
-
-        fn set_activations(&mut self, activations: &[f32]) {
-            <Self as DerefMut>::deref_mut(self).set_activations(activations)
+        fn output(&self) -> Shape {
+            self.deref().output()
         }
     };
 }
@@ -210,15 +342,11 @@ mod tests {
             .zip(right)
             .map(|(l, r)| f32::abs(l - r))
             .try_fold(0., |a, b| {
-                if let Some(ord) = a.partial_cmp(&b) {
-                    Some(match ord {
-                        std::cmp::Ordering::Less => b,
-                        std::cmp::Ordering::Equal => a,
-                        std::cmp::Ordering::Greater => a,
-                    })
-                } else {
-                    None
-                }
+                a.partial_cmp(&b).map(|ord| match ord {
+                    std::cmp::Ordering::Less => b,
+                    std::cmp::Ordering::Equal => a,
+                    std::cmp::Ordering::Greater => a,
+                })
             });
         err.map(|e| e < tolerance)
     }
@@ -226,14 +354,10 @@ mod tests {
     pub(crate) fn check(expected: &[f32], output: &[f32], tolerance: f32, id: &str) {
         let diag = || format!("expected: {:?}\nreceived: {:?}", expected, output);
 
-        if let Some(eq) = is_equal_ish(expected, output, tolerance) {
-            if eq {
-                return;
-            } else {
-                panic!("Evaluation produced incorrect {}.\n{}", id, diag())
-            }
-        } else {
-            panic!("Evaluation produced a NaN\n{}", diag())
+        match is_equal_ish(expected, output, tolerance) {
+            Some(false) => panic!("Evaluation produced incorrect {}.\n{}", id, diag()),
+            None => panic!("Evaluation produced a NaN\n{}", diag()),
+            _ => {}
         }
     }
 }

@@ -1,6 +1,5 @@
 use super::Processor;
 use crate::optimizer::Optimizer;
-
 use std::ops::{Deref, DerefMut};
 
 pub trait TrainingData {

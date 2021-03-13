@@ -1,12 +1,4 @@
-#![macro_use]
 use serde::{Deserialize, Serialize};
-
-// fn check_bad(f: f32) -> f32 {
-// 	if f.is_nan() || f.is_infinite() {
-// 		println!("{}", f);
-// 	}
-// 	f
-// }
 
 pub enum AFunc {
     Sigmoid,

@@ -1,92 +1,233 @@
-use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use crate::{f32s, helpers::VectorAdapter};
+use rand::{Rng, SeedableRng, rngs::SmallRng};
 use rand_distr::StandardNormal;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 //I used this blog post as reference to the initialization methods ->
 //https://towardsdatascience.com/weight-initialization-in-neural-networks-a-journey-from-the-basics-to-kaiming-954fb9b47c79
 
-/// Implement Initializer for the struct reference as well
-macro_rules! impl_ref {
-    ($struct:ty) => {
-        impl Initializer for &mut $struct {
-            fn get(&mut self, in_size: usize, size: usize) -> f32 {
-                <$struct as Initializer>::get(self, in_size, size)
-            }
-        }
-    };
+pub trait Initializer {
+    type Iter: Iterator<Item = f32>;
+
+    fn construct(self, in_size: usize, size: usize) -> Self::Iter;
 }
 
-pub trait Initializer {
+pub trait Init {
     fn get(&mut self, in_size: usize, size: usize) -> f32;
 }
 
-///Xavier initialization should be used for layers with symetric activation functions such as sigmoid or tanH
-pub struct XavierInit {
-    rng: SmallRng,
+fn seeder() -> u64 {
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+    NEXT_ID.fetch_add(1, Ordering::Relaxed)
 }
-impl XavierInit {
-    pub fn new() -> XavierInit {
-        XavierInit {
-            rng: SmallRng::seed_from_u64(0u64),
+
+pub use misc::InitAdapter;
+mod misc {
+    use super::*;
+
+    pub struct InitAdapter<T> {
+        inner: T,
+        in_size: usize,
+        size: usize,
+    }
+
+    impl<T> InitAdapter<T> {
+        pub fn new(inner: T, in_size: usize, size: usize) -> Self {
+            Self {
+                inner,
+                in_size,
+                size,
+            }
+        }
+    }
+
+    impl<T> Iterator for InitAdapter<T>
+    where
+        T: Init,
+    {
+        type Item = f32;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            Some(self.inner.get(self.in_size, self.size))
+        }
+    }
+
+    // pub struct InitializerBase<T> {
+    //     adapter: VectorAdapter<InitAdapter<T>>,
+    // }
+
+    // impl<T> InitializerBase<T>
+    // where
+    //     T: Init,
+    // {
+    //     pub fn new(init: T, in_size: usize, size: usize) -> Self {
+    //         Self {
+    //             adapter: VectorAdapter::new(InitAdapter::new(init, in_size, size)),
+    //         }
+    //     }
+    // }
+
+    // impl<T> Iterator for InitializerBase<T>
+    // where
+    //     T: Init,
+    // {
+    //     type Item = f32s;
+
+    //     fn next(&mut self) -> Option<Self::Item> {
+    //         self.adapter.next()
+    //     }
+    // }
+
+    impl<T> Initializer for T
+    where
+        T: Iterator<Item = f32>,
+    {
+        type Iter = T;
+
+        fn construct(self, _in_size: usize, _size: usize) -> Self::Iter {
+            self
+        }
+    }
+
+    // impl<T> Initializer for T
+    // where
+    //     T: Iterator<Item = f32s>,
+    // {
+    //     type Iter = T;
+
+    //     fn construct(self, _in_size: usize, _size: usize) -> Self::Iter {
+    //         self
+    //     }
+    // }
+}
+
+pub use xavier::Xavier;
+mod xavier {
+    use super::*;
+
+    /// Xavier initialization should be used for layers with symetric activation functions such as sigmoid or tanH
+    pub struct Xavier {
+        rng: SmallRng,
+    }
+
+    impl Xavier {
+        pub fn new() -> Self {
+            Self {
+                rng: SmallRng::seed_from_u64(seeder()),
+            }
+        }
+
+        pub fn seed(seed: u64) -> Self {
+            Self {
+                rng: SmallRng::seed_from_u64(seed),
+            }
+        }
+    }
+
+    impl Init for Xavier {
+        fn get(&mut self, in_size: usize, size: usize) -> f32 {
+            self.rng.sample::<f32, StandardNormal>(StandardNormal) / (in_size as f32).sqrt()
+        }
+    }
+
+    impl Initializer for Xavier {
+        type Iter = InitAdapter<Self>;
+
+        fn construct(self, in_size: usize, size: usize) -> Self::Iter {
+            InitAdapter::new(self, in_size, size)
         }
     }
 }
 
-impl Initializer for XavierInit {
-    fn get(&mut self, in_size: usize, _size: usize) -> f32 {
-        self.rng.sample::<f32, StandardNormal>(StandardNormal) / (in_size as f32).sqrt()
-    }
-}
-impl_ref!(XavierInit);
+pub use kaiming::Kaiming;
+mod kaiming {
+    use super::*;
 
-///Kaiming initialization should be used for layers with asymetric activation functions such as RELU
-pub struct KaimingInit {
-    rng: SmallRng,
-}
-impl KaimingInit {
-    pub fn new() -> KaimingInit {
-        KaimingInit {
-            rng: SmallRng::seed_from_u64(0u64),
+    /// Kaiming initialization should be used for layers with asymetric activation functions such as RELU
+    pub struct Kaiming {
+        rng: SmallRng,
+    }
+
+    impl Kaiming {
+        pub fn new() -> Self {
+            Self {
+                rng: SmallRng::seed_from_u64(seeder()),
+            }
+        }
+
+        pub fn seed(seed: u64) -> Self {
+            Self {
+                rng: SmallRng::seed_from_u64(seed),
+            }
         }
     }
-}
-impl Initializer for KaimingInit {
-    fn get(&mut self, in_size: usize, _: usize) -> f32 {
-        self.rng.sample::<f32, StandardNormal>(StandardNormal) * (2f32 / (in_size as f32)).sqrt()
-    }
-}
-impl_ref!(KaimingInit);
 
-///Always initializes weights to one
-pub struct IdentityInit;
-impl Initializer for IdentityInit {
-    fn get(&mut self, _: usize, _: usize) -> f32 {
-        1f32
+    impl Init for Kaiming {
+        fn get(&mut self, in_size: usize, size: usize) -> f32 {
+            self.rng.sample::<f32, StandardNormal>(StandardNormal)
+                * (2f32 / (in_size as f32)).sqrt()
+        }
     }
-}
-impl_ref!(IdentityInit);
 
-/// This initializer accepts an iterator over f32 values and uses them to initialize the weights.
-/// Panics if a weights is requested but the iterator returns None.
-pub struct WeightInit<T: Iterator<Item = f32>> {
-    iter: T,
-}
-impl<I: Iterator<Item = f32>> WeightInit<I> {
-    pub fn new<T: IntoIterator<Item = f32, IntoIter = I>>(weights: T) -> Self {
-        Self {
-            iter: weights.into_iter(),
+    impl Initializer for Kaiming {
+        type Iter = InitAdapter<Self>;
+
+        fn construct(self, in_size: usize, size: usize) -> Self::Iter {
+            InitAdapter::new(self, in_size, size)
         }
     }
 }
 
-impl<I: Iterator<Item = f32>> Initializer for WeightInit<I> {
-    fn get(&mut self, _in_size: usize, _size: usize) -> f32 {
-        self.iter.next().expect("Ran out of weights")
+pub use normal::Normal;
+mod normal {
+    use super::*;
+
+    /// Kaiming initialization should be used for layers with asymetric activation functions such as RELU
+    pub struct Normal {
+        rng: SmallRng,
+    }
+
+    impl Normal {
+        pub fn new() -> Self {
+            Self {
+                rng: SmallRng::seed_from_u64(seeder()),
+            }
+        }
+
+        pub fn seed(seed: u64) -> Self {
+            Self {
+                rng: SmallRng::seed_from_u64(seed),
+            }
+        }
+    }
+
+    impl Init for Normal {
+        fn get(&mut self, _in_size: usize, _size: usize) -> f32 {
+            self.rng.sample::<f32, StandardNormal>(StandardNormal)
+        }
+    }
+
+    impl Initializer for Normal {
+        type Iter = InitAdapter<Self>;
+
+        fn construct(self, in_size: usize, size: usize) -> Self::Iter {
+            InitAdapter::new(self, in_size, size)
+        }
     }
 }
 
-impl<I: Iterator<Item = f32>> Initializer for &mut WeightInit<I> {
-    fn get(&mut self, in_size: usize, size: usize) -> f32 {
-        (*self).get(in_size, size)
+pub use ones::Ones;
+mod ones {
+    use super::*;
+    use std::iter::{repeat, Repeat};
+
+    pub struct Ones;
+
+    impl Initializer for Ones {
+        type Iter = Repeat<f32>;
+
+        fn construct(self, _in_size: usize, _size: usize) -> Self::Iter {
+            repeat(1.)
+        }
     }
 }
