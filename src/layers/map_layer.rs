@@ -1,12 +1,10 @@
 use crate::{
     a_funcs::{ActivFunc, Identity},
-    allocator::{
-        DualAllocator, GradHndl, GradStorage, Handle, WeightAllocator, WeightHndl, WeightStorage,
-    },
+    storage::{DualAllocator, GradStorage, Handle, WeightStorage},
     f32s,
     helpers::{simd_to_iter, simd_with, IterMask, VectorAdapter},
     initializer::{Initializer, Ones},
-    layers::{no_value, Aligned, BasicLayer, FromArch, Layer, LayerArch, LayerBuilder, Shape},
+    layers::{no_value, Aligned, BasicLayer, Layer, LayerArch, LayerBuilder, Shape},
 };
 use serde::{Deserialize, Serialize};
 use std::{convert::TryInto, marker::PhantomData};
@@ -136,12 +134,14 @@ where
     }
 }
 
-impl<T: ActivFunc> Into<BasicLayer> for MapLayer<T>
-where
-    BasicLayer: FromArch<T>,
+impl<T> From<MapLayer<T>> for BasicLayer
+where 
+    T: ActivFunc,
+    LayerArch<T>: From<MapLayer<T>>,
+    BasicLayer: From<LayerArch<T>>,
 {
-    fn into(self) -> BasicLayer {
-        <BasicLayer as FromArch<T>>::from(LayerArch::MapLayer(self))
+    fn from(val: MapLayer<T>) -> Self {
+        <BasicLayer as From<_>>::from(LayerArch::from(val))
     }
 }
 
@@ -176,12 +176,7 @@ mod tests {
     use std::iter::repeat;
 
     use super::*;
-    use crate::{
-        a_funcs::Test,
-        allocator::{Allocator, GradAllocator},
-        helpers::as_scalar,
-        layers::tests::check,
-    };
+    use crate::{a_funcs::Test, storage::GradAllocator, layers::tests::check};
 
     fn create_layer() -> (MapLayer<Test>, WeightStorage, GradAllocator) {
         let mut alloc = DualAllocator::new();

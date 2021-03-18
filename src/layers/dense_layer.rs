@@ -1,12 +1,10 @@
 use crate::{
     a_funcs::ActivFunc,
-    allocator::{
-        DualAllocator, GradHndl, GradStorage, Handle, WeightAllocator, WeightHndl, WeightStorage,
-    },
+    storage::{DualAllocator, GradStorage, Handle, WeightStorage},
     f32s,
-    helpers::{as_scalar, as_scalar_mut, simd_to_iter, simd_with, sum, IterMask, VectorAdapter},
+    helpers::{sum, IterMask, VectorAdapter},
     initializer::{Initializer, Xavier},
-    layers::{no_value, Aligned, BasicLayer, FromArch, Layer, LayerArch, LayerBuilder, Shape}
+    layers::{no_value, Aligned, BasicLayer, Layer, LayerArch, LayerBuilder, Shape},
 };
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
@@ -265,12 +263,14 @@ where
     }
 }
 
-impl<T: ActivFunc> Into<BasicLayer> for DenseLayer<T>
-where
-    BasicLayer: FromArch<T>,
+impl<T> From<DenseLayer<T>> for BasicLayer
+where 
+    T: ActivFunc,
+    LayerArch<T>: From<DenseLayer<T>>,
+    BasicLayer: From<LayerArch<T>>,
 {
-    fn into(self) -> BasicLayer {
-        <BasicLayer as FromArch<T>>::from(LayerArch::DenseLayer(self))
+    fn from(val: DenseLayer<T>) -> Self {
+        <BasicLayer as From<_>>::from(LayerArch::from(val))
     }
 }
 
@@ -279,8 +279,7 @@ mod tests {
     use super::*;
     use crate::{
         a_funcs::Test,
-        allocator::{Allocator, DualAllocator, GradAllocator},
-        helpers::{as_scalar, VectorAdapter},
+        storage::{DualAllocator, GradAllocator},
         layers::tests::check,
     };
 

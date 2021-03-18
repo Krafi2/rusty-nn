@@ -1,5 +1,4 @@
 use std::{
-    convert::TryFrom,
     error::Error,
     fmt::{Debug, Display},
     fs::File,
@@ -7,14 +6,10 @@ use std::{
     path::Path,
 };
 
-use serde::{
-    de::{self, SeqAccess, Visitor},
-    ser::SerializeSeq,
-    Deserialize, Deserializer, Serialize, Serializer,
-};
+use serde::{Deserialize, Serialize};
 
 use crate::{
-    allocator::{Allocator, DualAllocator, GradAllocator, GradStorage, WeightStorage},
+    storage::{DualAllocator, GradStorage, WeightStorage},
     f32s,
     layers::{no_value, Aligned, BasicLayer, Layer, Shape},
     network::{construction::LinearConstruction, Network},
@@ -51,7 +46,7 @@ where
 
         while let Some(layer) = iter.next() {
             if let Some(prev_layer) = iter.peek() {
-                let in_shape = layer.output();
+                let _in_shape = layer.output();
                 let out_shape = layer.input();
 
                 let mut out_grads = Aligned::zeroed(out_shape.scalar());

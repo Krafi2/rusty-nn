@@ -1,16 +1,15 @@
 use crate::f32s;
+use serde::{
+    de::{self, SeqAccess, Visitor},
+    ser::SerializeSeq,
+    Deserializer, Serializer,
+};
 
-pub mod boxed_simd {
+pub mod simd_vec {
+    use super::*;
     use crate::helpers::as_scalar;
 
-    use super::*;
-    use serde::{
-        de::{self, SeqAccess, Visitor},
-        ser::{SerializeSeq, SerializeStruct},
-        Deserializer, Serializer,
-    };
-
-    pub fn serialize<S>(aligned: &Box<[f32s]>, ser: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(aligned: &[f32s], ser: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -24,7 +23,7 @@ pub mod boxed_simd {
     struct SimdVisitor;
 
     impl<'de> Visitor<'de> for SimdVisitor {
-        type Value = Box<[f32s]>;
+        type Value = Vec<f32s>;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
             formatter.write_str("a sequence of floats")
@@ -68,14 +67,34 @@ pub mod boxed_simd {
                 }
                 vec.push(f32s::from_slice_unaligned(&buffer))
             }
-            Ok(vec.into_boxed_slice())
+            vec.shrink_to_fit();
+            Ok(vec)
         }
     }
+
+    pub fn deserialize<'de, D>(de: D) -> Result<Vec<f32s>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        de.deserialize_seq(SimdVisitor)
+    }
+}
+
+pub mod boxed_simd {
+    use super::*;
+
+    pub fn serialize<S>(aligned: &[f32s], ser: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        simd_vec::serialize(aligned, ser)
+    }
+
 
     pub fn deserialize<'de, D>(de: D) -> Result<Box<[f32s]>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        de.deserialize_seq(SimdVisitor)
+        simd_vec::deserialize(de).map(Vec::into_boxed_slice)
     }
 }

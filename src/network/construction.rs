@@ -1,6 +1,6 @@
 use crate::{
-    allocator::{DualAllocator, GradAllocator, WeightStorage},
-    layers::{BasicLayer, Layer, LayerBuilder, Shape}, network::FeedForward,
+    storage::{DualAllocator, GradAllocator},
+    layers::{BasicLayer, Layer, LayerBuilder, Shape},
 };
 
 /// This trait allows network architectures to be build using the LinearBuilder
@@ -81,13 +81,13 @@ where
     where
         T: LinearConstruction<Layer = L>,
     {
-        self.layers.first().map(|l| {
+        if let Some(l) = self.layers.first() {
             assert_eq!(
                 l.input(),
                 self.in_shape,
                 "Layer size mismatch. First layer reports a different size than configured"
             )
-        });
+        }
         T::construct(self.allocator, self.layers)
     }
 }

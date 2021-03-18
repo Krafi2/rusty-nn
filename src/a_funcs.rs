@@ -86,24 +86,3 @@ impl ActivFunc for Test {
         2.
     }
 }
-
-#[macro_export]
-macro_rules! a_funcs {
-	($t:ty, $m:item) => {
-		$m!(t)
-	};
-	($t:ty, $(types:ty),+, $m:item) => {{
-		$m!(t)
-		a_funcs!($types, $m)
-	}};
-	($m:item) => {
-		a_funcs!(
-			Sigmoid,
-			Identity,
-			TanH,
-			SiLU,
-			ReLU,
-			$m
-		);
-	};
-}

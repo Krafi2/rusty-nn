@@ -1,11 +1,9 @@
 use rusty_nn::{
     a_funcs::{Identity, Sigmoid},
-    initializer::{Normal, Ones, Xavier},
-    layers::{BasicLayer, DenseBuilder, MapBuilder},
+    initializer::{Ones, Xavier},
+    layers::{DenseBuilder, MapBuilder},
     network::{FeedForward, LinearBuilder, Network},
 };
-use serde::de::value;
-use serde_json::{from_reader, to_value};
 
 #[test]
 fn save_and_load() -> anyhow::Result<()> {

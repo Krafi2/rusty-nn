@@ -1,14 +1,12 @@
 use rusty_nn::{
-    a_funcs::{ActivFunc, Identity, Sigmoid},
+    a_funcs::{ActivFunc, Sigmoid},
     initializer::Xavier,
-    layers::{BasicLayer, DenseBuilder},
+    layers::DenseBuilder,
     loss_funcs::SquaredError,
     network::{FeedForward, LinearBuilder},
     optimizer::{Adam, GradientDescent, OptimizerBase},
     trainer::Stochaistic,
 };
-
-use anyhow;
 
 #[test]
 fn sigmoid_convergence() {

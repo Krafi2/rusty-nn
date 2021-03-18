@@ -9,7 +9,7 @@ use self::map_layer::MapLayer;
 
 use crate::{
     a_funcs::{ActivFunc, Identity, ReLU, SiLU, Sigmoid, TanH},
-    allocator::{DualAllocator, GradStorage, WeightAllocator, WeightStorage},
+    storage::{DualAllocator, GradStorage, WeightStorage},
     f32s,
     helpers::to_blocks,
     serde::boxed_simd,
@@ -18,16 +18,11 @@ use crate::{
 use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Serialize};
 
-use std::{
-    error::Error,
-    fmt::Display,
-    ops::{Deref, DerefMut},
-};
+use std::ops::{Deref, DerefMut};
 
 /// This enum represents the architecture of a layer. It is primarily used
 /// in the BasicLayer enum to fully describe a layer.
 #[enum_dispatch(Layer)]
-#[enum_dispatch(LayerGradients)]
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum LayerArch<T: ActivFunc> {
     DenseLayer(DenseLayer<T>),
@@ -37,7 +32,6 @@ pub enum LayerArch<T: ActivFunc> {
 /// This enum describes the architecture and activation function of a layer
 /// so it can be easily serialized and deserialized.
 #[enum_dispatch(Layer)]
-#[enum_dispatch(LayerGradients)]
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum BasicLayer {
     Sigmoid(LayerArch<Sigmoid>),
@@ -266,34 +260,6 @@ pub mod no_value {
     {
         de.deserialize_struct("aligned_no_value", &["len"], NoValueVisitor)
     }
-}
-
-pub use from_arch::FromArch;
-mod from_arch {
-    use super::*;
-
-    // The conversion is implemented like this instead of a trait, because the from trait is incompatible
-    // with some trait definitions made by the enum_dispatch macro and this seems like the path of least resistance
-    // as I don't think anyone will ever need to pass LayerArch as a generic argument needing the trait
-    pub trait FromArch<T: ActivFunc> {
-        fn from(arch: LayerArch<T>) -> BasicLayer;
-    }
-
-    macro_rules! impl_from_arch {
-        ($t:tt) => {
-            impl FromArch<$t> for BasicLayer {
-                fn from(arch: LayerArch<$t>) -> Self {
-                    Self::$t(arch)
-                }
-            }
-        };
-    }
-
-    impl_from_arch!(Sigmoid);
-    impl_from_arch!(Identity);
-    impl_from_arch!(TanH);
-    impl_from_arch!(SiLU);
-    impl_from_arch!(ReLU);
 }
 
 macro_rules! impl_layer_from_deref {

@@ -1,20 +1,12 @@
 use crate::{
     f32s,
     helpers::{as_scalar, as_scalar_mut},
-    initializer::Initializer,
     serde::boxed_simd,
 };
 
 use serde::{Deserialize, Serialize};
 
-use std::{
-    collections::HashSet,
-    fmt::Debug,
-    marker::PhantomData,
-    ops::{Deref, DerefMut, Index, IndexMut},
-    slice::{from_raw_parts, from_raw_parts_mut},
-    sync::atomic::{AtomicU32, Ordering},
-};
+use std::{fmt::Debug, slice::from_raw_parts_mut};
 
 pub type WeightStorage = Storage;
 pub type GradStorage = Storage;
@@ -213,18 +205,18 @@ mod storage {
             Self { storage }
         }
 
-        pub fn get<'a>(&'a self, handle: Handle) -> AlignedRef<'a> {
+        pub fn get(&self, handle: Handle) -> AlignedRef<'_> {
             AlignedRef::new(&self.storage[handle.start()..handle.end()])
         }
 
-        pub fn get_mut<'a>(&'a mut self, handle: Handle) -> AlignedRefMut<'a> {
+        pub fn get_mut(&mut self, handle: Handle) -> AlignedRefMut<'_> {
             AlignedRefMut::new(&mut self.storage[handle.start()..handle.end()])
         }
 
-        pub fn get_multiple_mut<'a>(
-            &'a mut self,
+        pub fn get_multiple_mut(
+            &mut self,
             handles: &[Handle],
-        ) -> Option<Vec<AlignedRefMut<'a>>> {
+        ) -> Option<Vec<AlignedRefMut<'_>>> {
             let mut vec = Vec::with_capacity(handles.len() * 2);
             for (i, handle) in handles.iter().enumerate() {
                 vec.push((handle.start(), i));

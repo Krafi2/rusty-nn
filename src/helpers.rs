@@ -1,6 +1,6 @@
 use crate::{f32s, mask_s, usize_s};
 use rand::{rngs::SmallRng, seq::SliceRandom, SeedableRng};
-use std::mem::{ManuallyDrop, MaybeUninit};
+use std::mem::MaybeUninit;
 
 pub struct VectorAdapter<I> {
     iter: I,
@@ -119,13 +119,13 @@ pub fn to_blocks(n: usize, block: usize) -> usize {
 
 #[inline]
 pub fn as_scalar(arr: &[f32s]) -> &[f32] {
-    let ptr = arr.as_ptr() as *const f32;
+    let ptr = arr.as_ptr().cast::<f32>();
     unsafe { std::slice::from_raw_parts(ptr, arr.len() * f32s::lanes()) }
 }
 
 #[inline]
 pub fn as_scalar_mut(arr: &mut [f32s]) -> &mut [f32] {
-    let ptr = arr.as_mut_ptr() as *mut f32;
+    let ptr = arr.as_mut_ptr().cast::<f32>();
     unsafe { std::slice::from_raw_parts_mut(ptr, arr.len() * f32s::lanes()) }
 }
 

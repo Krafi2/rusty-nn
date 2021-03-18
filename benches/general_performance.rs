@@ -1,11 +1,10 @@
 #![feature(test)]
 extern crate test;
-use test::Bencher;
 
 use rusty_nn::{
     a_funcs::Sigmoid,
     initializer::Xavier,
-    layers::{BasicLayer, DenseBuilder},
+    layers::DenseBuilder,
     loss_funcs::SquaredError,
     network::{FeedForward, LinearBuilder},
     optimizer::{GradientDescent, OptimizerBase},
@@ -15,7 +14,7 @@ use rusty_nn::{
 #[cfg(test)]
 mod tests {
     use super::*;
-    use test::Bencher;
+    use test::{Bencher, black_box};
 
     #[bench]
     fn training_speed(b: &mut Bencher) {
@@ -39,6 +38,6 @@ mod tests {
         let mut trainer =
             Stochaistic::from_tuples(t_data, epoch_count, batch_size, optimizer).unwrap();
 
-        b.iter(move || trainer.do_epoch())
+        b.iter(|| black_box(trainer.do_epoch()))
     }
 }

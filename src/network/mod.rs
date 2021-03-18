@@ -4,7 +4,7 @@ pub mod feed_forward;
 pub use self::{construction::LinearBuilder, feed_forward::FeedForward};
 
 use crate::{
-    allocator::{GradAllocator, GradStorage},
+    storage::GradStorage,
     f32s,
     helpers::as_scalar_mut,
     layers::{Aligned, Shape},

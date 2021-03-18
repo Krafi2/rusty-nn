@@ -1,5 +1,4 @@
-use crate::{f32s, helpers::VectorAdapter};
-use rand::{Rng, SeedableRng, rngs::SmallRng};
+use rand::{rngs::SmallRng, Rng, SeedableRng};
 use rand_distr::StandardNormal;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -125,7 +124,7 @@ mod xavier {
     }
 
     impl Init for Xavier {
-        fn get(&mut self, in_size: usize, size: usize) -> f32 {
+        fn get(&mut self, in_size: usize, _size: usize) -> f32 {
             self.rng.sample::<f32, StandardNormal>(StandardNormal) / (in_size as f32).sqrt()
         }
     }
@@ -163,9 +162,9 @@ mod kaiming {
     }
 
     impl Init for Kaiming {
-        fn get(&mut self, in_size: usize, size: usize) -> f32 {
+        fn get(&mut self, in_size: usize, _size: usize) -> f32 {
             self.rng.sample::<f32, StandardNormal>(StandardNormal)
-                * (2f32 / (in_size as f32)).sqrt()
+                * (2. / (in_size as f32)).sqrt()
         }
     }
 

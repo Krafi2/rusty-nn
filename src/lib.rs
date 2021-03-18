@@ -1,5 +1,5 @@
 pub mod a_funcs;
-pub mod allocator;
+pub mod storage;
 pub mod helpers;
 pub mod initializer;
 pub mod layers;

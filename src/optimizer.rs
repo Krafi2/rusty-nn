@@ -1,4 +1,4 @@
-use crate::{f32s, helpers::as_scalar, loss_funcs::LossFunc, network::Network};
+use crate::{f32s, loss_funcs::LossFunc, network::Network};
 
 use std::{
     marker::PhantomData,
@@ -33,7 +33,7 @@ pub use base::*;
 mod base {
     use super::*;
     use crate::{
-        allocator::{Allocator, GradAllocator, GradStorage},
+        storage::GradStorage,
         layers::Aligned,
         loss_funcs::SquaredError,
         network::{construction::Construction, FeedForward},
