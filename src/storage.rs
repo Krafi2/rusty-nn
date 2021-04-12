@@ -1,6 +1,6 @@
 use crate::{
     f32s,
-    helpers::{as_scalar, as_scalar_mut},
+    misc::simd::{as_scalar, as_scalar_mut},
     serde::boxed_simd,
 };
 
@@ -140,10 +140,7 @@ mod allocator {
 
     impl Allocator {
         pub fn new() -> Self {
-            Self {
-                mem: Vec::new(),
-                buffered: 0,
-            }
+            Default::default()
         }
 
         fn new_handle(&self, len: usize) -> Handle {
@@ -188,6 +185,15 @@ mod allocator {
             Storage::new(storage)
         }
     }
+
+    impl Default for Allocator {
+        fn default() -> Self {
+            Self {
+                mem: Vec::new(),
+                buffered: 0,
+            }
+        }
+    }
 }
 
 pub use storage::Storage;
@@ -213,10 +219,7 @@ mod storage {
             AlignedRefMut::new(&mut self.storage[handle.start()..handle.end()])
         }
 
-        pub fn get_multiple_mut(
-            &mut self,
-            handles: &[Handle],
-        ) -> Option<Vec<AlignedRefMut<'_>>> {
+        pub fn get_multiple_mut(&mut self, handles: &[Handle]) -> Option<Vec<AlignedRefMut<'_>>> {
             let mut vec = Vec::with_capacity(handles.len() * 2);
             for (i, handle) in handles.iter().enumerate() {
                 vec.push((handle.start(), i));
@@ -261,6 +264,7 @@ pub use weight_allocator::DualAllocator;
 mod weight_allocator {
     use super::*;
 
+    #[derive(Debug, Clone, Default)]
     pub struct DualAllocator {
         weights: Allocator,
         grads: Allocator,

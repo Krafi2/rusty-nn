@@ -1,12 +1,14 @@
+#![feature(min_specialization)]
+
 pub mod a_funcs;
-pub mod storage;
-pub mod helpers;
 pub mod initializer;
 pub mod layers;
-pub mod loss_funcs;
+pub mod loss;
+pub mod misc;
 pub mod network;
 pub mod optimizer;
 pub mod serde;
+pub mod storage;
 pub mod trainer;
 
 #[allow(non_camel_case_types)]

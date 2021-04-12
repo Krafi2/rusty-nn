@@ -10,17 +10,17 @@ pub enum AFunc {
 }
 
 pub trait ActivFunc {
-    fn evaluate(x: f32) -> f32;
-    fn derivative(inp: f32, out: f32) -> f32;
+    fn evaluate(&self, x: f32) -> f32;
+    fn derivative(&self, inp: f32, out: f32) -> f32;
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Sigmoid;
 impl ActivFunc for Sigmoid {
-    fn evaluate(x: f32) -> f32 {
+    fn evaluate(&self, x: f32) -> f32 {
         1. / (1. + (-x).exp())
     }
-    fn derivative(_: f32, out: f32) -> f32 {
+    fn derivative(&self, _: f32, out: f32) -> f32 {
         out * (1. - out)
     }
 }
@@ -28,10 +28,10 @@ impl ActivFunc for Sigmoid {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Identity;
 impl ActivFunc for Identity {
-    fn evaluate(x: f32) -> f32 {
+    fn evaluate(&self, x: f32) -> f32 {
         x
     }
-    fn derivative(_: f32, _: f32) -> f32 {
+    fn derivative(&self, _: f32, _: f32) -> f32 {
         1.
     }
 }
@@ -39,10 +39,10 @@ impl ActivFunc for Identity {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct TanH;
 impl ActivFunc for TanH {
-    fn evaluate(x: f32) -> f32 {
+    fn evaluate(&self, x: f32) -> f32 {
         x.tanh()
     }
-    fn derivative(_inp: f32, out: f32) -> f32 {
+    fn derivative(&self, _inp: f32, out: f32) -> f32 {
         1. - out * out
     }
 }
@@ -50,10 +50,10 @@ impl ActivFunc for TanH {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SiLU;
 impl ActivFunc for SiLU {
-    fn evaluate(x: f32) -> f32 {
+    fn evaluate(&self, x: f32) -> f32 {
         x / (1. + (-x).exp()) // x * sigmoid(x)
     }
-    fn derivative(inp: f32, out: f32) -> f32 {
+    fn derivative(&self, inp: f32, out: f32) -> f32 {
         let s = out / (inp * inp.signum() * 0.00000001); //get back the sigmoid value at x and hopefully prevent division by zero
         s * (1. + inp * (1. - s))
     }
@@ -62,10 +62,10 @@ impl ActivFunc for SiLU {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ReLU;
 impl ActivFunc for ReLU {
-    fn evaluate(x: f32) -> f32 {
+    fn evaluate(&self, x: f32) -> f32 {
         f32::max(x, 0.)
     }
-    fn derivative(inp: f32, _out: f32) -> f32 {
+    fn derivative(&self, inp: f32, _out: f32) -> f32 {
         if inp > 0. {
             1.
         } else {
@@ -79,10 +79,10 @@ impl ActivFunc for ReLU {
 /// which makes it easy to check the validity of the outputs
 pub struct Test;
 impl ActivFunc for Test {
-    fn evaluate(x: f32) -> f32 {
+    fn evaluate(&self, x: f32) -> f32 {
         2. * x
     }
-    fn derivative(_inp: f32, _out: f32) -> f32 {
+    fn derivative(&self, _inp: f32, _out: f32) -> f32 {
         2.
     }
 }

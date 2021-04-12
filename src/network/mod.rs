@@ -4,10 +4,10 @@ pub mod feed_forward;
 pub use self::{construction::LinearBuilder, feed_forward::FeedForward};
 
 use crate::{
-    storage::GradStorage,
     f32s,
-    helpers::as_scalar_mut,
     layers::{Aligned, Shape},
+    misc::simd::as_scalar_mut,
+    storage::GradStorage,
 };
 
 /// Trait all neural network architectures must implement

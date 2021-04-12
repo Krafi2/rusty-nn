@@ -8,8 +8,8 @@ use rusty_nn::{
 #[test]
 fn save_and_load() -> anyhow::Result<()> {
     let mut network = LinearBuilder::new(3)
-        .layer(DenseBuilder::<Sigmoid>::new(Xavier::new(), 5, true, true))
-        .layer(MapBuilder::<Identity>::new(Ones))
+        .layer(DenseBuilder::new(Sigmoid, Xavier::new(), 5, true, true))
+        .layer(MapBuilder::new(Identity, Ones))
         .build::<FeedForward>()
         .unwrap()
         .unwrap();

@@ -1,6 +1,6 @@
 use crate::{
-    storage::{DualAllocator, GradAllocator},
     layers::{BasicLayer, Layer, LayerBuilder, Shape},
+    storage::{DualAllocator, GradAllocator},
 };
 
 /// This trait allows network architectures to be build using the LinearBuilder

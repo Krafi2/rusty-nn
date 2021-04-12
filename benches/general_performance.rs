@@ -5,16 +5,19 @@ use rusty_nn::{
     a_funcs::Sigmoid,
     initializer::Xavier,
     layers::DenseBuilder,
-    loss_funcs::SquaredError,
+    loss::MeanSquared,
     network::{FeedForward, LinearBuilder},
-    optimizer::{GradientDescent, OptimizerBase},
-    trainer::Stochaistic,
+    optimizer::GradientDescent
 };
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use test::{Bencher, black_box};
+    use rusty_nn::{
+        optimizer::OptimizerBuilder,
+        trainer::{Data, Trainer},
+    };
+    use test::{black_box, Bencher};
 
     #[bench]
     fn training_speed(b: &mut Bencher) {
@@ -22,22 +25,29 @@ mod tests {
         let epoch_count = 1;
         let learning_rate = 0.1;
 
-        let t_data = vec![([0.], [0.]); 100];
+        let t_data = vec![Data::new([0.], [0.]); 100];
 
         let network = LinearBuilder::new(1)
-            .layer(DenseBuilder::<Sigmoid>::new(Xavier::new(), 100, true, true))
-            .layer(DenseBuilder::<Sigmoid>::new(Xavier::new(), 100, true, true))
-            .layer(DenseBuilder::<Sigmoid>::new(Xavier::new(), 1, true, true))
+            .layer(DenseBuilder::new(Sigmoid, Xavier::new(), 100, true, true))
+            .layer(DenseBuilder::new(Sigmoid, Xavier::new(), 100, true, true))
+            .layer(DenseBuilder::new(Sigmoid, Xavier::new(), 1, true, true))
             .build::<FeedForward>()
             .unwrap();
 
-        let optimizer = OptimizerBase::<SquaredError, _, _>::new(
-            network,
-            GradientDescent::builder(learning_rate),
-        );
-        let mut trainer =
-            Stochaistic::from_tuples(t_data, epoch_count, batch_size, optimizer).unwrap();
+        let optimizer = OptimizerBuilder::new()
+            .network(network)
+            .loss(MeanSquared)
+            .optimizer(GradientDescent::builder().l_rate(learning_rate).build())
+            .build()
+            .unwrap();
 
-        b.iter(|| black_box(trainer.do_epoch()))
+        let mut trainer = Trainer::new()
+            .data(t_data)
+            .batch_size(batch_size)
+            .optimizer(optimizer)
+            .build()
+            .unwrap();
+
+        b.iter(|| black_box(trainer.train(epoch_count)))
     }
 }

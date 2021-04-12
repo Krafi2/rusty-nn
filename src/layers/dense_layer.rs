@@ -1,13 +1,15 @@
 use crate::{
     a_funcs::ActivFunc,
-    storage::{DualAllocator, GradStorage, Handle, WeightStorage},
     f32s,
-    helpers::{sum, IterMask, VectorAdapter},
     initializer::{Initializer, Xavier},
     layers::{no_value, Aligned, BasicLayer, Layer, LayerArch, LayerBuilder, Shape},
+    misc::{
+        simd::{sum, VectorAdapter},
+        IterMask,
+    },
+    storage::{DualAllocator, GradStorage, Handle, WeightStorage},
 };
 use serde::{Deserialize, Serialize};
-use std::marker::PhantomData;
 
 /// Your run of the mill fully connected (dense) layer
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -28,7 +30,7 @@ pub struct DenseLayer<F> {
     #[serde(with = "no_value")]
     temp: Aligned,
 
-    phantom: PhantomData<*const F>,
+    a_func: F,
 }
 
 impl<F> Layer for DenseLayer<F>
@@ -85,7 +87,7 @@ where
             .iter()
             .zip(self.activations.as_scalar_mut())
         {
-            *o = F::evaluate(*wi);
+            *o = self.a_func.evaluate(*wi);
         }
 
         &self.activations
@@ -123,7 +125,7 @@ where
             .zip(self.weighted_inputs.as_scalar())
             .zip(self.activations.as_scalar())
         {
-            *temp = F::derivative(*inp, *out);
+            *temp = self.a_func.derivative(*inp, *out);
         }
         for (temp, id) in self
             .temp
@@ -190,6 +192,7 @@ where
 
 impl<F> DenseLayer<F> {
     pub fn new<I>(
+        a_func: F,
         init: I,
         alloc: &mut DualAllocator,
         in_size: usize,
@@ -220,27 +223,27 @@ impl<F> DenseLayer<F> {
             weighted_inputs: Aligned::zeroed(out_shape.scalar()),
             activations: Aligned::zeroed(out_shape.scalar()),
             temp: Aligned::zeroed(in_shape.scalar()),
-            phantom: PhantomData,
+            a_func,
         }
     }
 }
 
 pub struct DenseBuilder<F, I = Xavier> {
+    a_func: F,
     init: I,
     size: usize,
     update_w: bool,
     update_b: bool,
-    phantom: PhantomData<*const F>,
 }
 
 impl<F, I> DenseBuilder<F, I> {
-    pub fn new(init: I, size: usize, update_w: bool, update_b: bool) -> Self {
+    pub fn new(a_func: F, init: I, size: usize, update_w: bool, update_b: bool) -> Self {
         DenseBuilder {
+            a_func,
             init,
             size,
             update_w,
             update_b,
-            phantom: PhantomData,
         }
     }
 }
@@ -253,6 +256,7 @@ where
 
     fn connect(self, input: Shape, alloc: &mut DualAllocator) -> Self::Output {
         DenseLayer::new(
+            self.a_func,
             self.init,
             alloc,
             input.scalar(),
@@ -264,7 +268,7 @@ where
 }
 
 impl<T> From<DenseLayer<T>> for BasicLayer
-where 
+where
     T: ActivFunc,
     LayerArch<T>: From<DenseLayer<T>>,
     BasicLayer: From<LayerArch<T>>,
@@ -279,14 +283,14 @@ mod tests {
     use super::*;
     use crate::{
         a_funcs::Test,
-        storage::{DualAllocator, GradAllocator},
         layers::tests::check,
+        storage::{DualAllocator, GradAllocator},
     };
 
     fn create_layer() -> (DenseLayer<Test>, WeightStorage, GradAllocator) {
         let mut alloc = DualAllocator::new();
         let init = (1..=12).map(|x| x as f32);
-        let layer = DenseLayer::<Test>::new(init, &mut alloc, 4, 3, true, true);
+        let layer = DenseLayer::new(Test, init, &mut alloc, 4, 3, true, true);
 
         let (weights, grads) = alloc.finish();
         (layer, weights, grads)

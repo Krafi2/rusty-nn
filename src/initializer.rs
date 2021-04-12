@@ -2,8 +2,8 @@ use rand::{rngs::SmallRng, Rng, SeedableRng};
 use rand_distr::StandardNormal;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-//I used this blog post as reference to the initialization methods ->
-//https://towardsdatascience.com/weight-initialization-in-neural-networks-a-journey-from-the-basics-to-kaiming-954fb9b47c79
+// I used this blog post as reference to the initialization methods ->
+// https://towardsdatascience.com/weight-initialization-in-neural-networks-a-journey-from-the-basics-to-kaiming-954fb9b47c79
 
 pub trait Initializer {
     type Iter: Iterator<Item = f32>;
@@ -51,32 +51,6 @@ mod misc {
         }
     }
 
-    // pub struct InitializerBase<T> {
-    //     adapter: VectorAdapter<InitAdapter<T>>,
-    // }
-
-    // impl<T> InitializerBase<T>
-    // where
-    //     T: Init,
-    // {
-    //     pub fn new(init: T, in_size: usize, size: usize) -> Self {
-    //         Self {
-    //             adapter: VectorAdapter::new(InitAdapter::new(init, in_size, size)),
-    //         }
-    //     }
-    // }
-
-    // impl<T> Iterator for InitializerBase<T>
-    // where
-    //     T: Init,
-    // {
-    //     type Item = f32s;
-
-    //     fn next(&mut self) -> Option<Self::Item> {
-    //         self.adapter.next()
-    //     }
-    // }
-
     impl<T> Initializer for T
     where
         T: Iterator<Item = f32>,
@@ -87,17 +61,6 @@ mod misc {
             self
         }
     }
-
-    // impl<T> Initializer for T
-    // where
-    //     T: Iterator<Item = f32s>,
-    // {
-    //     type Iter = T;
-
-    //     fn construct(self, _in_size: usize, _size: usize) -> Self::Iter {
-    //         self
-    //     }
-    // }
 }
 
 pub use xavier::Xavier;
@@ -105,15 +68,14 @@ mod xavier {
     use super::*;
 
     /// Xavier initialization should be used for layers with symetric activation functions such as sigmoid or tanH
+    #[derive(Debug)]
     pub struct Xavier {
         rng: SmallRng,
     }
 
     impl Xavier {
         pub fn new() -> Self {
-            Self {
-                rng: SmallRng::seed_from_u64(seeder()),
-            }
+            Default::default()
         }
 
         pub fn seed(seed: u64) -> Self {
@@ -136,6 +98,12 @@ mod xavier {
             InitAdapter::new(self, in_size, size)
         }
     }
+
+    impl Default for Xavier {
+        fn default() -> Self {
+            Self::seed(seeder())
+    }
+    }
 }
 
 pub use kaiming::Kaiming;
@@ -143,15 +111,14 @@ mod kaiming {
     use super::*;
 
     /// Kaiming initialization should be used for layers with asymetric activation functions such as RELU
+    #[derive(Debug)]
     pub struct Kaiming {
         rng: SmallRng,
     }
 
     impl Kaiming {
         pub fn new() -> Self {
-            Self {
-                rng: SmallRng::seed_from_u64(seeder()),
-            }
+            Default::default()
         }
 
         pub fn seed(seed: u64) -> Self {
@@ -163,8 +130,7 @@ mod kaiming {
 
     impl Init for Kaiming {
         fn get(&mut self, in_size: usize, _size: usize) -> f32 {
-            self.rng.sample::<f32, StandardNormal>(StandardNormal)
-                * (2. / (in_size as f32)).sqrt()
+            self.rng.sample::<f32, StandardNormal>(StandardNormal) * (2. / (in_size as f32)).sqrt()
         }
     }
 
@@ -175,6 +141,12 @@ mod kaiming {
             InitAdapter::new(self, in_size, size)
         }
     }
+
+    impl Default for Kaiming {
+        fn default() -> Self {
+            Self::seed(seeder())
+        }
+    }
 }
 
 pub use normal::Normal;
@@ -182,15 +154,14 @@ mod normal {
     use super::*;
 
     /// Kaiming initialization should be used for layers with asymetric activation functions such as RELU
+    #[derive(Debug)]
     pub struct Normal {
         rng: SmallRng,
     }
 
     impl Normal {
         pub fn new() -> Self {
-            Self {
-                rng: SmallRng::seed_from_u64(seeder()),
-            }
+            Default::default()
         }
 
         pub fn seed(seed: u64) -> Self {
@@ -213,6 +184,12 @@ mod normal {
             InitAdapter::new(self, in_size, size)
         }
     }
+
+    impl Default for Normal {
+        fn default() -> Self {
+            Self::seed(seeder())
+    }
+    }
 }
 
 pub use ones::Ones;
@@ -220,6 +197,7 @@ mod ones {
     use super::*;
     use std::iter::{repeat, Repeat};
 
+    #[derive(Debug, Default, Clone)]
     pub struct Ones;
 
     impl Initializer for Ones {

@@ -9,10 +9,10 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    storage::{DualAllocator, GradStorage, WeightStorage},
     f32s,
     layers::{no_value, Aligned, BasicLayer, Layer, Shape},
     network::{construction::LinearConstruction, Network},
+    storage::{DualAllocator, GradStorage, WeightStorage},
 };
 
 /// This struct represents a neural network and supports the basic functionality of giving predictions based on provided input.
@@ -45,17 +45,13 @@ where
         let mut in_grads = out_grads.to_owned();
 
         while let Some(layer) = iter.next() {
-            if let Some(prev_layer) = iter.peek() {
-                let _in_shape = layer.output();
-                let out_shape = layer.input();
+            let input = iter.peek().map_or(&self.input, |l| l.activations());
+            let out_shape = layer.input();
+            let mut out_grads = Aligned::zeroed(out_shape.scalar());
 
-                let mut out_grads = Aligned::zeroed(out_shape.scalar());
-                let input = prev_layer.activations();
+            layer.calc_gradients(input, &self.weights, grads, &in_grads, &mut out_grads);
 
-                layer.calc_gradients(input, &self.weights, grads, &in_grads, &mut out_grads);
-
-                in_grads = out_grads;
-            }
+            in_grads = out_grads;
         }
     }
 

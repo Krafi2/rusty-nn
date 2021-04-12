@@ -1,13 +1,16 @@
 use crate::{
     a_funcs::{ActivFunc, Identity},
-    storage::{DualAllocator, GradStorage, Handle, WeightStorage},
     f32s,
-    helpers::{simd_to_iter, simd_with, IterMask, VectorAdapter},
     initializer::{Initializer, Ones},
     layers::{no_value, Aligned, BasicLayer, Layer, LayerArch, LayerBuilder, Shape},
+    misc::{
+        simd::{simd_to_iter, simd_with, VectorAdapter},
+        IterMask,
+    },
+    storage::{DualAllocator, GradStorage, Handle, WeightStorage},
 };
 use serde::{Deserialize, Serialize};
-use std::{convert::TryInto, marker::PhantomData};
+use std::convert::TryInto;
 
 /// Layer type where every neuron operates only on a single output of the layer below.
 /// Useful when you want to normalize some values
@@ -21,11 +24,11 @@ pub struct MapLayer<F> {
     #[serde(with = "no_value")]
     activations: Aligned,
 
-    phantom: PhantomData<*const F>,
+    a_func: F,
 }
 
-impl<T> MapLayer<T> {
-    pub fn new<I>(init: I, alloc: &mut DualAllocator, input: Shape) -> Self
+impl<F> MapLayer<F> {
+    pub fn new<I>(a_func: F, init: I, alloc: &mut DualAllocator, input: Shape) -> Self
     where
         I: Initializer,
     {
@@ -39,7 +42,7 @@ impl<T> MapLayer<T> {
             biases,
             weighted_inputs: Aligned::zeroed(input.scalar()),
             activations: Aligned::zeroed(input.scalar()),
-            phantom: PhantomData,
+            a_func,
         }
     }
 }
@@ -65,7 +68,7 @@ where
             .iter()
             .zip(self.activations.as_scalar_mut())
         {
-            *o = F::evaluate(*wi);
+            *o = self.a_func.evaluate(*wi);
         }
 
         &self.activations
@@ -112,7 +115,7 @@ where
                 * simd_with(
                     simd_to_iter(*wi)
                         .zip(simd_to_iter(*a))
-                        .map(|(i, o)| F::derivative(*i, *o)),
+                        .map(|(i, o)| self.a_func.derivative(*i, *o)),
                 );
 
             *bd += af_deriv; //bias derivative
@@ -135,7 +138,7 @@ where
 }
 
 impl<T> From<MapLayer<T>> for BasicLayer
-where 
+where
     T: ActivFunc,
     LayerArch<T>: From<MapLayer<T>>,
     BasicLayer: From<LayerArch<T>>,
@@ -145,29 +148,26 @@ where
     }
 }
 
-pub struct MapBuilder<T = Identity, I = Ones> {
+pub struct MapBuilder<F = Identity, I = Ones> {
+    a_func: F,
     init: I,
-    phantom: PhantomData<*const T>,
 }
 
-impl<T, I> MapBuilder<T, I> {
-    pub fn new(init: I) -> Self {
-        MapBuilder {
-            init,
-            phantom: PhantomData,
-        }
+impl<F, I> MapBuilder<F, I> {
+    pub fn new(a_func: F, init: I) -> Self {
+        MapBuilder { a_func, init }
     }
 }
 
-impl<T, I> LayerBuilder for MapBuilder<T, I>
+impl<F, I> LayerBuilder for MapBuilder<F, I>
 where
+    F: ActivFunc,
     I: Initializer,
-    T: ActivFunc,
 {
-    type Output = MapLayer<T>;
+    type Output = MapLayer<F>;
 
     fn connect(self, input: Shape, alloc: &mut DualAllocator) -> Self::Output {
-        MapLayer::new(self.init, alloc, input)
+        MapLayer::new(self.a_func, self.init, alloc, input)
     }
 }
 
@@ -176,12 +176,12 @@ mod tests {
     use std::iter::repeat;
 
     use super::*;
-    use crate::{a_funcs::Test, storage::GradAllocator, layers::tests::check};
+    use crate::{a_funcs::Test, layers::tests::check, storage::GradAllocator};
 
     fn create_layer() -> (MapLayer<Test>, WeightStorage, GradAllocator) {
         let mut alloc = DualAllocator::new();
         let init = [1., 2., 3.].iter().copied().chain(repeat(0.));
-        let layer = MapLayer::<Test>::new(init, &mut alloc, Shape::new(3));
+        let layer = MapLayer::new(Test, init, &mut alloc, Shape::new(3));
 
         let (weights, grads) = alloc.finish();
         (layer, weights, grads)

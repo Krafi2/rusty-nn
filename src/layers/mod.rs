@@ -9,10 +9,10 @@ use self::map_layer::MapLayer;
 
 use crate::{
     a_funcs::{ActivFunc, Identity, ReLU, SiLU, Sigmoid, TanH},
-    storage::{DualAllocator, GradStorage, WeightStorage},
     f32s,
-    helpers::to_blocks,
+    misc::simd::to_blocks,
     serde::boxed_simd,
+    storage::{DualAllocator, GradStorage, WeightStorage},
 };
 
 use enum_dispatch::enum_dispatch;
@@ -103,16 +103,14 @@ mod shape {
 
 pub use aligned::Aligned;
 mod aligned {
-    // TODO implement ser de
-
-    use crate::helpers::{as_scalar, as_scalar_mut, into_scalar};
+    use crate::misc::simd::{as_scalar, as_scalar_mut, into_scalar};
 
     use super::*;
     #[derive(Clone, Debug, Serialize, Deserialize)]
     pub struct Aligned {
+        len: usize,
         #[serde(with = "boxed_simd")]
         array: Box<[f32s]>,
-        len: usize,
     }
 
     impl Aligned {
@@ -130,7 +128,7 @@ mod aligned {
         {
             let array = vec.into();
             assert!(len <= array.len() * f32s::lanes());
-            Self { array, len }
+            Self { len, array }
         }
 
         pub fn from_scalar<T>(vec: &T) -> Self
@@ -175,20 +173,6 @@ mod aligned {
             self.shape() == other.shape()
         }
     }
-
-    // impl Deref for Aligned {
-    //     type Target = [f32];
-
-    //     fn deref(&self) -> &Self::Target {
-    //         self.as_scalar()
-    //     }
-    // }
-
-    // impl DerefMut for Aligned {
-    //     fn deref_mut(&mut self) -> &mut Self::Target {
-    //         self.as_scalar_mut()
-    //     }
-    // }
 
     impl AsRef<[f32]> for Aligned {
         fn as_ref(&self) -> &[f32] {

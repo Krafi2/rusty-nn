@@ -7,7 +7,7 @@ use serde::{
 
 pub mod simd_vec {
     use super::*;
-    use crate::helpers::as_scalar;
+    use crate::misc::simd::as_scalar;
 
     pub fn serialize<S>(aligned: &[f32s], ser: S) -> Result<S::Ok, S::Error>
     where
@@ -89,7 +89,6 @@ pub mod boxed_simd {
     {
         simd_vec::serialize(aligned, ser)
     }
-
 
     pub fn deserialize<'de, D>(de: D) -> Result<Box<[f32s]>, D::Error>
     where
